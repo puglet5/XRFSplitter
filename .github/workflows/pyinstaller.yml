@@ -26,15 +26,11 @@ jobs:
               pipenv run pyinstaller --noconfirm --onefile --windowed \
               --hidden-import=tkinter --hidden-import=tkinter.filedialog --hidden-import=tkinter.font --hidden-import=tkinter.ttk \
               --hidden-import='PIL._tkinter_finder' \
-              --add-data "$(PIPENV_VERBOSITY=-1 pipenv run pip show customtkinter | grep -i location | awk '{ print $NF }')/customtkinter:customtkinter/" \
-              --add-data "$(PIPENV_VERBOSITY=-1 pipenv run pip show darkdetect | grep -i location | awk '{ print $NF }')/darkdetect:darkdetect/" \
               ./app/main.py
             elif [ "$RUNNER_OS" == "Windows" ]; then
               pipenv run pyinstaller --noconfirm --onefile --windowed \
               --hidden-import=tkinter --hidden-import=tkinter.filedialog --hidden-import=tkinter.font --hidden-import=tkinter.ttk \
               --hidden-import='PIL._tkinter_finder' \
-              --add-data "$(PIPENV_VERBOSITY=-1 pipenv run pip show customtkinter | grep -i location | awk '{ print $NF }')/customtkinter;customtkinter/" \
-              --add-data "$(PIPENV_VERBOSITY=-1 pipenv run pip show darkdetect | grep -i location | awk '{ print $NF }')/darkdetect;darkdetect/" \
               ./app/main.py
             else
               echo "$RUNNER_OS not supported"
