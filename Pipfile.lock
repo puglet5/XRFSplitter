@@ -1,7 +1,7 @@
 {
     "_meta": {
         "hash": {
-            "sha256": "8d72ccd00fb15b572590ae4716c1dd7a29bb8da0c37e6410083fa03eba6827b1"
+            "sha256": "57512cf24aa3f5935043fb4c6db776d90581078ebc6d959641fcdc8cea2733ab"
         },
         "pipfile-spec": 6,
         "requires": {
@@ -63,7 +63,6 @@
                 "sha256:fe6b44fb8fcdf7eda4ef4461b97b3f63c466b27ab151bec2366db8b197387841"
             ],
             "index": "pypi",
-            "markers": "python_version >= '3.9'",
             "version": "==1.26.2"
         },
         "packaging": {
@@ -103,7 +102,6 @@
                 "sha256:fcb68203c833cc735321512e13861358079a96c174a61f5116a1de89c58c0ef7"
             ],
             "index": "pypi",
-            "markers": "python_version >= '3.9'",
             "version": "==2.1.4"
         },
         "pyinstaller": {
@@ -122,7 +120,6 @@
                 "sha256:e436fcc0ea87c3f132baac916d508c24c84a8f6d8a06c3154fbc753f169b76c7"
             ],
             "index": "pypi",
-            "markers": "python_version < '3.13' and python_version >= '3.8'",
             "version": "==6.3.0"
         },
         "pyinstaller-hooks-contrib": {
@@ -138,7 +135,7 @@
                 "sha256:0123cacc1627ae19ddf3c27a5de5bd67ee4586fbdd6440d9748f8abb483d3e86",
                 "sha256:961d03dc3453ebbc59dbdea9e4e11c5651520a876d0f4db161e8674aae935da9"
             ],
-            "markers": "python_version >= '2.7' and python_version not in '3.0, 3.1, 3.2'",
+            "markers": "python_version >= '2.7' and python_version not in '3.0, 3.1, 3.2, 3.3'",
             "version": "==2.8.2"
         },
         "pytz": {
@@ -147,6 +144,14 @@
                 "sha256:ce42d816b81b68506614c11e8937d3aa9e41007ceb50bfdcb0749b921bf646c7"
             ],
             "version": "==2023.3.post1"
+        },
+        "pyudev": {
+            "hashes": [
+                "sha256:75e54d37218f5ac45b0da1f0fd9cc5e526a3cac3ef1cfad410cf7ab338b01471",
+                "sha256:da7e977be15fb5eccf8797b8e2176cd5b4f39288707cdcb39d1cabe7c8793e2b"
+            ],
+            "markers": "platform_system == 'Linux'",
+            "version": "==0.24.1"
         },
         "setuptools": {
             "hashes": [
@@ -161,7 +166,7 @@
                 "sha256:1e61c37477a1626458e36f7b1d82aa5c9b094fa4802892072e49de9c60c4c926",
                 "sha256:8abb2f1d86890a2dfb989f9a77cfcfd3e47c2a354b01111771326f8aa26e0254"
             ],
-            "markers": "python_version >= '2.7' and python_version not in '3.0, 3.1, 3.2'",
+            "markers": "python_version >= '2.7' and python_version not in '3.0, 3.1, 3.2, 3.3'",
             "version": "==1.16.0"
         },
         "tk": {
@@ -179,6 +184,13 @@
             ],
             "markers": "python_version >= '2'",
             "version": "==2023.3"
+        },
+        "usb-monitor": {
+            "hashes": [
+                "sha256:1454e9cff467956b26b224880933a77a5aff4406b120653b1a4a1fe7ed15dd3d"
+            ],
+            "index": "pypi",
+            "version": "==1.16"
         }
     },
     "develop": {}

@@ -8,6 +8,7 @@ tk = "*"
 pandas = "*"
 numpy = "*"
 pyinstaller = "*"
+usb-monitor = "*"
 
 [dev-packages]
 
