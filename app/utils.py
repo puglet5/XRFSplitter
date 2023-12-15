@@ -1,7 +1,13 @@
 import csv
+import logging as log
+import os
 import shutil
+from dataclasses import dataclass, field
+from datetime import datetime as dt
+from functools import partial
 from io import StringIO
 from pathlib import Path
+from struct import unpack
 from typing import Dict, NotRequired, TypedDict
 
 Result = TypedDict(
@@ -185,3 +191,464 @@ def write_csv(buf: StringIO, path: Path):
     with open(path, "w") as f:
         buf.seek(0)
         shutil.copyfileobj(buf, f)
+
+
+ELEMENT_SYMBOLS = [
+    "H",
+    "He",
+    "Li",
+    "Be",
+    "B",
+    "C",
+    "N",
+    "O",
+    "F",
+    "Ne",
+    "Na",
+    "Mg",
+    "Al",
+    "Si",
+    "P",
+    "S",
+    "Cl",
+    "Ar",
+    "K",
+    "Ca",
+    "Sc",
+    "Ti",
+    "V",
+    "Cr",
+    "Mn",
+    "Fe",
+    "Co",
+    "Ni",
+    "Cu",
+    "Zn",
+    "Ga",
+    "Ge",
+    "As",
+    "Se",
+    "Br",
+    "Kr",
+    "Rb",
+    "Sr",
+    "Y",
+    "Zr",
+    "Nb",
+    "Mo",
+    "Tc",
+    "Ru",
+    "Rh",
+    "Pd",
+    "Ag",
+    "Cd",
+    "In",
+    "Sn",
+    "Sb",
+    "Te",
+    "I",
+    "Xe",
+    "Cs",
+    "Ba",
+    "La",
+    "Ce",
+    "Pr",
+    "Nd",
+    "Pm",
+    "Sm",
+    "Eu",
+    "Gd",
+    "Tb",
+    "Dy",
+    "Ho",
+    "Er",
+    "Tm",
+    "Yb",
+    "Lu",
+    "Hf",
+    "Ta",
+    "W",
+    "Re",
+    "Os",
+    "Ir",
+    "Pt",
+    "Au",
+    "Hg",
+    "Tl",
+    "Pb",
+    "Bi",
+    "Po",
+    "At",
+    "Rn",
+    "Fr",
+    "Ra",
+    "Ac",
+    "Th",
+    "Pa",
+    "U",
+    "Np",
+    "Pu",
+    "Am",
+    "Cm",
+    "Bk",
+    "Cf",
+    "Es",
+    "Fm",
+    "Md",
+    "No",
+    "Lr",
+    "Rf",
+    "Db",
+    "Sg",
+    "Bh",
+    "Hs",
+    "Mt",
+    "Ds",
+    "Rg",
+    "Cn",
+    "Nh",
+    "Fl",
+    "Mc",
+    "Lv",
+    "Ts",
+    "Og",
+]
+
+ELEMENT_NAMES = [
+    "Hydrogen",
+    "Helium",
+    "Lithium",
+    "Beryllium",
+    "Boron",
+    "Carbon",
+    "Nitrogen",
+    "Oxygen",
+    "Fluorine",
+    "Neon",
+    "Sodium",
+    "Magnesium",
+    "Aluminium",
+    "Silicon",
+    "Phosphorus",
+    "Sulfur",
+    "Chlorine",
+    "Argon",
+    "Potassium",
+    "Calcium",
+    "Scandium",
+    "Titanium",
+    "Vanadium",
+    "Chromium",
+    "Manganese",
+    "Iron",
+    "Cobalt",
+    "Nickel",
+    "Copper",
+    "Zinc",
+    "Gallium",
+    "Germanium",
+    "Arsenic",
+    "Selenium",
+    "Bromine",
+    "Krypton",
+    "Rubidium",
+    "Strontium",
+    "Yttrium",
+    "Zirconium",
+    "Niobium",
+    "Molybdenum",
+    "Technetium",
+    "Ruthenium",
+    "Rhodium",
+    "Palladium",
+    "Silver",
+    "Cadmium",
+    "Indium",
+    "Tin",
+    "Antimony",
+    "Tellurium",
+    "Iodine",
+    "Xenon",
+    "Caesium",
+    "Barium",
+    "Lanthanum",
+    "Cerium",
+    "Praseodymium",
+    "Neodymium",
+    "Promethium",
+    "Samarium",
+    "Europium",
+    "Gadolinium",
+    "Terbium",
+    "Dysprosium",
+    "Holmium",
+    "Erbium",
+    "Thulium",
+    "Ytterbium",
+    "Lutetium",
+    "Hafnium",
+    "Tantalum",
+    "Tungsten",
+    "Rhenium",
+    "Osmium",
+    "Iridium",
+    "Platinum",
+    "Gold",
+    "Mercury",
+    "Thallium",
+    "Lead",
+    "Bismuth",
+    "Polonium",
+    "Astatine",
+    "Radon",
+    "Francium",
+    "Radium",
+    "Actinium",
+    "Thorium",
+    "Protactinium",
+    "Uranium",
+    "Neptunium",
+    "Plutonium",
+    "Americium",
+    "Curium",
+    "Berkelium",
+    "Californium",
+    "Einsteinium",
+    "Fermium",
+    "Mendelevium",
+    "Nobelium",
+    "Lawrencium",
+    "Rutherfordium",
+    "Dubnium",
+    "Seaborgium",
+    "Bohrium",
+    "Hassium",
+    "Meitnerium",
+    "Darmstadtium",
+    "Roentgenium",
+    "Copernicium",
+    "Nihonium",
+    "Flerovium",
+    "Moscovium",
+    "Livermorium",
+    "Tennessine",
+    "Oganesson",
+]
+
+
+def element_z_to_symbol(Z: int) -> str:
+    """Returns 1-2 character Element symbol as a string"""
+    if Z == 0:
+        return ""
+    elif Z <= 118:
+        return ELEMENT_SYMBOLS[Z - 1]
+    else:
+        log.error("Error: Z out of range")
+        return "ERR"
+
+
+def element_z_to_name(Z):
+    if Z <= 118:
+        return ELEMENT_NAMES[Z - 1]
+    else:
+        log.error("Error: Z out of range")
+        return None
+
+
+@dataclass
+class XRFSpectrum:
+    name: str = ""
+    datetime: dt = dt(1970, 1, 1, 0)
+    counts: list[int] = field(default_factory=list)
+    energies: list[float] = field(default_factory=list)
+    energy_channel_start: float = 0  # in eV
+    n_channels: int = 0
+    source_voltage: float = 0.0  # in kV
+    source_current: float = 0.0  # in uA
+    filter_layer_1_element_z: int = 0  # Z num
+    filter_layer_1_thickness: int = 0  # in um
+    filter_layer_2_element_z: int = 0  # Z num
+    filter_layer_2_thickness: int = 0  # in um
+    filter_layer_3_element_z: int = 0  # Z num
+    filter_layer_3_thickness: int = 0  # in um
+    filter_n = 0
+    detector_temp_celsius: float = 0.0
+    ambient_temp_fahrenheit: float = 0.0
+    ambient_temp_celsius: float = 0.0
+    nose_temp_celsius: float = 0.0
+    nose_pressure: float = 0.0
+    energy_per_channel: float = 20.0  # in eV
+    time_elapsed_total: float = 0.0
+    time_live: float = 0.0
+    vacuum_state: int = 0
+    counts_valid: int = 0
+    counts_raw: int = 0
+
+    def calculate_energies_list(self):
+        self.energies = list(
+            ((i * self.energy_per_channel + self.energy_channel_start) * 0.001)
+            for i in range(0, self.n_channels)
+        )
+        return self.energies
+
+
+@dataclass
+class PDZFile:
+    pdz_file_path: str
+    anode_element_z: bytes = b""
+    tube_name: str = ""
+    tube_number: int = 0
+    firmware_vers_list_len: int = 0
+
+    def __post_init__(self):
+        self.name = os.path.basename(self.pdz_file_path)
+        self.dispatch = {
+            "B": partial(self.read_bytes, "B", 1),
+            "h": partial(self.read_bytes, "<h", 2),
+            "i": partial(self.read_bytes, "<i", 4),
+            "I": partial(self.read_bytes, "<I", 4),
+            "f": partial(self.read_bytes, "<f", 4),
+            "s": self.read_string,
+            "10": partial(self.read_n_bytes, 10),
+            "5": partial(self.read_n_bytes, 5),
+        }
+
+        self.pdz_attr_formats_1 = [
+            ("pdz_file_version", "h"),
+            ("other", "I"),
+            ("other", "10"),
+            ("other", "I"),
+            ("other", "h"),
+            ("other", "I"),
+            ("instrument_serial_number", "s"),
+            ("instrument_build_number", "s"),
+            ("anode_element_z", "B"),
+            ("other", "5"),
+            ("detector_type", "s"),
+            ("tube_name", "s"),
+            ("tube_number", "h"),
+            ("collimator_type", "s"),
+            ("firmware_vers_list_len", "i"),
+        ]
+
+        self.pdz_attr_formats_2 = [
+            ("other", "h"),
+            ("other", "i"),
+            ("other", "i"),
+            ("other", "i"),
+            ("other", "i"),
+            ("other", "i"),
+            ("other", "i"),
+            ("other", "f"),
+            ("other", "f"),
+            ("other", "f"),
+            ("other", "f"),
+            ("assay_time_live", "f"),
+            ("assay_time_total", "f"),
+            ("measurement_mode", "s"),
+            ("other", "i"),
+            ("user", "s"),
+            ("other", "h"),
+        ]
+
+        self.spectrum_attr_formats = [
+            ("other", "i"),
+            ("other", "f"),
+            ("counts_raw", "i"),
+            ("counts_valid", "i"),
+            ("other", "f"),
+            ("other", "f"),
+            ("time_elapsed_total", "f"),
+            ("other", "f"),
+            ("other", "f"),
+            ("other", "f"),
+            ("time_live", "f"),
+            ("source_voltage", "f"),
+            ("source_current", "f"),
+            ("filter_layer_1_element_z", "h"),
+            ("filter_layer_1_thickness", "h"),
+            ("filter_layer_2_element_z", "h"),
+            ("filter_layer_2_thickness", "h"),
+            ("filter_layer_3_element_z", "h"),
+            ("filter_layer_3_thickness", "h"),
+            ("filter_n", "h"),
+            ("detector_temp_celsius", "f"),
+            ("ambient_temp_fahrenheit", "f"),
+            ("vacuum_state", "i"),
+            ("energy_per_channel", "f"),
+            ("other", "h"),
+            ("energy_channel_start", "f"),
+            ("spectrum_year", "h"),
+            ("spectrum_month", "h"),
+            ("spectrum_datetimedayofweek", "h"),
+            ("spectrum_day", "h"),
+            ("spectrum_hour", "h"),
+            ("spectrum_minute", "h"),
+            ("spectrum_second", "h"),
+            ("spectrum_millisecond", "h"),
+            ("nose_pressure", "f"),
+            ("n_channels", "h"),
+            ("nose_temp_celsius", "h"),
+            ("other", "h"),
+            ("name", "s"),
+            ("other", "h"),
+        ]
+
+        self.read_pdz_data()
+        self.datetime = self.spectrum_1.datetime
+
+    def read_bytes(self, fmt, size):
+        return unpack(fmt, self.pdz_file_reader.read(size))[0]
+
+    def read_n_bytes(self, size):
+        return self.pdz_file_reader.read(size)
+
+    def read_string(self):
+        return self.pdz_file_reader.read(self.read_bytes("<i", 4) * 2).decode("utf16")
+
+    def read_spectrum_params(self, spectrum: XRFSpectrum):
+        for attr, fmt in self.spectrum_attr_formats:
+            value = self.dispatch[fmt]()
+            spectrum.__setattr__(attr, value)
+
+        spectrum.ambient_temp_celsius = (spectrum.ambient_temp_fahrenheit - 32) / 1.8
+
+    def read_spectrum_counts(self, spectrum: XRFSpectrum):
+        for _ in range(spectrum.n_channels):
+            spectrum.counts.append(self.read_bytes("<i", 4))
+
+    def read_pdz_data(self):
+        with open(self.pdz_file_path, "rb") as self.pdz_file_reader:
+            for attr, fmt in self.pdz_attr_formats_1:
+                self.__setattr__(attr, self.dispatch[fmt]())
+
+            for _ in range(self.firmware_vers_list_len):
+                self.read_bytes("h", 2)
+                self.read_string()
+
+            self.anode_element_symbol = element_z_to_symbol(int(self.anode_element_z))
+            self.anode_element_name = element_z_to_name(int(self.anode_element_z))
+            self.tube_type = f"{self.tube_name}:{self.tube_number}"
+
+            for attr, fmt in self.pdz_attr_formats_2:
+                self.__setattr__(attr, self.dispatch[fmt]())
+
+            self.spectrum_1 = XRFSpectrum()
+            self.read_spectrum_params(self.spectrum_1)
+            self.read_spectrum_counts(self.spectrum_1)
+            self.spectrum_1.calculate_energies_list()
+            self.phasecount = 1
+
+            if self.read_bytes("h", 2) == 3:
+                self.phasecount += 1
+                self.spectrum_2 = XRFSpectrum()
+                self.read_spectrum_params(self.spectrum_2)
+                self.read_spectrum_counts(self.spectrum_2)
+                self.spectrum_2.calculate_energies_list()
+
+                if self.read_bytes("h", 2) == 3:
+                    self.phasecount += 1
+                    self.spectrum_3 = XRFSpectrum()
+                    self.read_spectrum_params(self.spectrum_3)
+                    self.read_spectrum_counts(self.spectrum_3)
+                    self.spectrum_3.calculate_energies_list()
