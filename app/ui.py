@@ -45,7 +45,7 @@ class UserInterface:
         ]
         self.device_label.insert(
             END,
-            drives,
+            str(drives),
         )
 
     def start(self):
