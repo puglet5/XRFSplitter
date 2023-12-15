@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 def get_device_mountpoint():
     ...
 
+
 def mount_device():
     ...
 

@@ -11,6 +11,8 @@ pyinstaller = "*"
 usb-monitor = "*"
 
 [dev-packages]
+black = "*"
+bandit = "*"
 
 [requires]
 python_version = "3.11"
