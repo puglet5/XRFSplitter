@@ -8,7 +8,7 @@ from functools import partial
 from io import StringIO
 from pathlib import Path
 from struct import unpack
-from typing import Dict, NotRequired, TypedDict
+from typing import Any, Callable, Literal, NotRequired, TypedDict
 
 Result = TypedDict(
     "Result",
@@ -129,70 +129,10 @@ Result = TypedDict(
         "Cal Check": str,
     },
 )
-
-Results = Dict[str, Result]
-
-result_keys: list[str] = list(Result.__dict__["__annotations__"].keys())
-result_keys_no_err = list(filter(lambda s: " Err" not in s, result_keys))
-
-
-def construct_data(filepath: Path):
-    with open(filepath, "r") as f:
-        lines_arr = list(
-            csv.reader(f, skipinitialspace=True, delimiter=",", quoting=csv.QUOTE_NONE)
-        )
-
-    header_ids: list[int] = []
-    for i, line in enumerate(lines_arr):
-        if line[0] == "File #":
-            header_ids.append(i)
-
-    els_per_header: list[int] = [
-        header_ids[n] - header_ids[n - 1] for n in range(1, len(header_ids))
-    ] + [len(lines_arr) - header_ids[-1]]
-
-    lines_same_header: list[list[list[str]]] = []
-    for i, e in zip(header_ids, els_per_header):
-        lines_same_header.append(lines_arr[i : i + e])
-
-    results_data: Results = {}
-    for lines in lines_same_header:
-        for l in lines[1:]:
-            results_data[l[0]] = dict(zip(lines[0], l))  # type: ignore
-
-    return results_data
-
-
-def select_data(data: Results, data_range: list[int] = [0]):
-    max_data_number = max([int(s) for s in data.keys()]) + 1
-    if data_range[0] is not None and len(data_range) == 1:
-        data_range.append(max_data_number)
-
-    data_selected = [
-        [data.get(str(i), {}).get(k) for k in result_keys] for i in range(*data_range)
-    ]
-    data_strings: list[list[str]] = [
-        [i or "" for i in res] for res in data_selected if any(res)
-    ]
-
-    return data_strings
-
-
-def data_to_csv(data: list[list[str]]):
-    data.insert(0, result_keys)
-    sio = StringIO()
-    csvWriter = csv.writer(sio)
-    csvWriter.writerows(data)
-    sio.seek(0)
-    return sio
-
-
-def write_csv(buf: StringIO, path: Path):
-    with open(path, "w") as f:
-        buf.seek(0)
-        shutil.copyfileobj(buf, f)
-
-
+Results = dict[str, Result]
+RESULT_KEYS: list[str] = list(Result.__dict__["__annotations__"].keys())
+RESULT_KEYS_NO_ERR = list(filter(lambda s: " Err" not in s, RESULT_KEYS))
+FMTS = Literal["B", "h", "i", "I", "f", "s", "10", "5"]
 ELEMENT_SYMBOLS = [
     "H",
     "He",
@@ -313,7 +253,6 @@ ELEMENT_SYMBOLS = [
     "Ts",
     "Og",
 ]
-
 ELEMENT_NAMES = [
     "Hydrogen",
     "Helium",
@@ -436,20 +375,77 @@ ELEMENT_NAMES = [
 ]
 
 
-def element_z_to_symbol(Z: int) -> str:
+def construct_data(filepath: Path):
+    with open(filepath, "r") as f:
+        lines_arr = list(
+            csv.reader(f, skipinitialspace=True, delimiter=",", quoting=csv.QUOTE_NONE)
+        )
+
+    header_ids: list[int] = []
+    for i, line in enumerate(lines_arr):
+        if line[0] == "File #":
+            header_ids.append(i)
+
+    els_per_header: list[int] = [
+        header_ids[n] - header_ids[n - 1] for n in range(1, len(header_ids))
+    ] + [len(lines_arr) - header_ids[-1]]
+
+    lines_same_header: list[list[list[str]]] = []
+    for i, e in zip(header_ids, els_per_header):
+        lines_same_header.append(lines_arr[i : i + e])
+
+    results_data: Results = {}
+    for lines in lines_same_header:
+        for l in lines[1:]:
+            results_data[l[0]] = dict(zip(lines[0], l))  # type: ignore
+
+    return results_data
+
+
+def select_data(data: Results, data_range: list[int] = [0]):
+    max_data_number = max([int(s) for s in data.keys()]) + 1
+    if data_range[0] is not None and len(data_range) == 1:
+        data_range.append(max_data_number)
+
+    data_selected = [
+        [data.get(str(i), {}).get(k) for k in RESULT_KEYS] for i in range(*data_range)
+    ]
+    data_strings: list[list[str]] = [
+        [i or "" for i in res] for res in data_selected if any(res)
+    ]
+
+    return data_strings
+
+
+def data_to_csv(data: list[list[str]]):
+    data.insert(0, RESULT_KEYS)
+    sio = StringIO()
+    csvWriter = csv.writer(sio)
+    csvWriter.writerows(data)
+    sio.seek(0)
+    return sio
+
+
+def write_csv(buf: StringIO, path: Path):
+    with open(path, "w") as f:
+        buf.seek(0)
+        shutil.copyfileobj(buf, f)
+
+
+def element_z_to_symbol(z: int) -> str:
     """Returns 1-2 character Element symbol as a string"""
-    if Z == 0:
+    if z == 0:
         return ""
-    elif Z <= 118:
-        return ELEMENT_SYMBOLS[Z - 1]
+    elif z <= 118:
+        return ELEMENT_SYMBOLS[z - 1]
     else:
         log.error("Error: Z out of range")
         return "ERR"
 
 
-def element_z_to_name(Z):
-    if Z <= 118:
-        return ELEMENT_NAMES[Z - 1]
+def element_z_to_name(z):
+    if z <= 118:
+        return ELEMENT_NAMES[z - 1]
     else:
         log.error("Error: Z out of range")
         return None
@@ -457,37 +453,36 @@ def element_z_to_name(Z):
 
 @dataclass
 class XRFSpectrum:
-    name: str = ""
-    datetime: dt = dt(1970, 1, 1, 0)
-    counts: list[int] = field(default_factory=list)
-    energies: list[float] = field(default_factory=list)
-    energy_channel_start: float = 0  # in eV
-    n_channels: int = 0
-    source_voltage: float = 0.0  # in kV
-    source_current: float = 0.0  # in uA
-    filter_layer_1_element_z: int = 0  # Z num
-    filter_layer_1_thickness: int = 0  # in um
-    filter_layer_2_element_z: int = 0  # Z num
-    filter_layer_2_thickness: int = 0  # in um
-    filter_layer_3_element_z: int = 0  # Z num
-    filter_layer_3_thickness: int = 0  # in um
-    filter_n = 0
-    detector_temp_celsius: float = 0.0
-    ambient_temp_fahrenheit: float = 0.0
-    ambient_temp_celsius: float = 0.0
-    nose_temp_celsius: float = 0.0
-    nose_pressure: float = 0.0
-    energy_per_channel: float = 20.0  # in eV
-    time_elapsed_total: float = 0.0
-    time_live: float = 0.0
-    vacuum_state: int = 0
-    counts_valid: int = 0
-    counts_raw: int = 0
+    datetime: dt = field(default=dt(1970, 1, 1, 0), init=False)
+    counts: list[int] = field(default_factory=list, init=False)
+    energies: list[float] = field(default_factory=list, init=False)
+    source_voltage: float = field(default=0.0, init=False)  # in kV
+    source_current: float = field(default=0.0, init=False)  # in uA
+    filter_layer_1_element_z: int = field(default=0, init=False)  # Z num
+    filter_layer_1_thickness: int = field(default=0, init=False)  # in um
+    filter_layer_2_element_z: int = field(default=0, init=False)  # Z num
+    filter_layer_2_thickness: int = field(default=0, init=False)  # in um
+    filter_layer_3_element_z: int = field(default=0, init=False)  # Z num
+    filter_layer_3_thickness: int = field(default=0, init=False)  # in um
+    detector_temp_celsius: float = field(default=0.0, init=False)
+    ambient_temp_fahrenheit: float = field(default=0.0, init=False)
+    ambient_temp_celsius: float = field(default=0.0, init=False)
+    nose_temp_celsius: float = field(default=0.0, init=False)
+    nose_pressure: float = field(default=0.0, init=False)
+    energy_per_channel: float = field(default=20.0, init=False)  # in eV
+    vacuum_state: int = field(default=0, init=False)
+    _energy_channel_start: float = field(default=0, init=False)  # in eV
+    _n_channels: int = field(default=0, init=False)
+    _filter_n: int = field(default=0, init=False)
+    _time_elapsed_total: float = field(default=0.0, init=False)
+    _time_live: float = field(default=0.0, init=False)
+    _counts_valid: int = field(default=0, init=False)
+    _counts_raw: int = field(default=0, init=False)
 
     def calculate_energies_list(self):
         self.energies = list(
-            ((i * self.energy_per_channel + self.energy_channel_start) * 0.001)
-            for i in range(0, self.n_channels)
+            ((i * self.energy_per_channel + self._energy_channel_start) * 0.001)
+            for i in range(0, self._n_channels)
         )
         return self.energies
 
@@ -495,74 +490,91 @@ class XRFSpectrum:
 @dataclass
 class PDZFile:
     pdz_file_path: str
-    anode_element_z: bytes = b""
-    tube_name: str = ""
-    tube_number: int = 0
-    firmware_vers_list_len: int = 0
+    name: str = field(default="", init=False)
+    anode_element_z: bytes = field(default=b"", init=False)
+    tube_name: str = field(default="", init=False)
+    tube_number: int = field(default=0, init=False)
+    spectra: list[XRFSpectrum] = field(default_factory=list, init=False)
+    phase_count: int = field(default=0, init=False)
+    datetime: dt = field(default=dt(1970, 1, 1, 0), init=False)
+    instrument_serial_number: str = field(default="", init=False)
+    instrument_build_number: str = field(default="", init=False)
+    user: str = field(default="", init=False)
+    detector_type: str = field(default="", init=False)
+    collimator_type: str = field(default="", init=False)
+    _assay_time_live: float = field(default=0.0, init=False)
+    _assay_time_total: float = field(default=0.0, init=False)
+    _other: Any = field(default=None, init=False)
+    _firmware_vers_list_len: int = field(default=0, init=False)
+    _pdz_file_version: int = field(default=25, init=False)
+
+    def __repr__(self):
+        kws = [f"{key}={value!r}" for key, value in self.__dict__.items()]
+        return "{}({})".format(type(self).__name__, ", ".join(kws))
 
     def __post_init__(self):
         self.name = os.path.basename(self.pdz_file_path)
-        self.dispatch = {
-            "B": partial(self.read_bytes, "B", 1),
-            "h": partial(self.read_bytes, "<h", 2),
-            "i": partial(self.read_bytes, "<i", 4),
-            "I": partial(self.read_bytes, "<I", 4),
-            "f": partial(self.read_bytes, "<f", 4),
-            "s": self.read_string,
-            "10": partial(self.read_n_bytes, 10),
-            "5": partial(self.read_n_bytes, 5),
+        self._dispatch: dict[str, Callable[[], Any]] = {
+            "B": partial(self._read_bytes, "B", 1),
+            "h": partial(self._read_bytes, "<h", 2),
+            "i": partial(self._read_bytes, "<i", 4),
+            "I": partial(self._read_bytes, "<I", 4),
+            "f": partial(self._read_bytes, "<f", 4),
+            "s": self._read_string,
+            "10": partial(self._read_n_bytes, 10),
+            "5": partial(self._read_n_bytes, 5),
         }
 
-        self.pdz_attr_formats_1 = [
-            ("pdz_file_version", "h"),
-            ("other", "I"),
-            ("other", "10"),
-            ("other", "I"),
-            ("other", "h"),
-            ("other", "I"),
+        self._pdz_attr_formats_1: list[tuple[str, FMTS]] = [
+            ("_pdz_file_version", "h"),
+            ("_other", "I"),
+            ("_other", "10"),
+            ("_other", "I"),
+            ("_other", "h"),
+            ("_other", "I"),
             ("instrument_serial_number", "s"),
             ("instrument_build_number", "s"),
             ("anode_element_z", "B"),
-            ("other", "5"),
+            ("_other", "5"),
             ("detector_type", "s"),
             ("tube_name", "s"),
             ("tube_number", "h"),
             ("collimator_type", "s"),
-            ("firmware_vers_list_len", "i"),
+            ("_firmware_vers_list_len", "i"),
         ]
 
-        self.pdz_attr_formats_2 = [
-            ("other", "h"),
-            ("other", "i"),
-            ("other", "i"),
-            ("other", "i"),
-            ("other", "i"),
-            ("other", "i"),
-            ("other", "i"),
-            ("other", "f"),
-            ("other", "f"),
-            ("other", "f"),
-            ("other", "f"),
-            ("assay_time_live", "f"),
-            ("assay_time_total", "f"),
+        self._pdz_attr_formats_2: list[tuple[str, FMTS]] = [
+            ("_other", "h"),
+            ("_other", "i"),
+            ("_other", "i"),
+            ("_other", "i"),
+            ("_other", "i"),
+            ("_other", "i"),
+            ("_other", "i"),
+            ("_other", "f"),
+            ("_other", "f"),
+            ("_other", "f"),
+            ("_other", "f"),
+            ("_assay_time_live", "f"),
+            ("_assay_time_total", "f"),
             ("measurement_mode", "s"),
-            ("other", "i"),
+            ("_other", "i"),
             ("user", "s"),
-            ("other", "h"),
+            ("_other", "h"),
         ]
 
-        self.spectrum_attr_formats = [
-            ("other", "i"),
-            ("other", "f"),
-            ("counts_raw", "i"),
-            ("counts_valid", "i"),
-            ("other", "f"),
-            ("other", "f"),
-            ("time_elapsed_total", "f"),
-            ("other", "f"),
-            ("other", "f"),
-            ("other", "f"),
-            ("time_live", "f"),
+        self._spectrum_attr_formats: list[tuple[str, FMTS]] = [
+            ("_other", "i"),
+            ("_other", "f"),
+            ("_counts_raw", "i"),
+            ("_counts_valid", "i"),
+            ("_other", "f"),
+            ("_other", "f"),
+            ("_time_elapsed_total", "f"),
+            ("_other", "f"),
+            ("_other", "f"),
+            ("_other", "f"),
+            ("_time_live", "f"),
             ("source_voltage", "f"),
             ("source_current", "f"),
             ("filter_layer_1_element_z", "h"),
@@ -571,84 +583,77 @@ class PDZFile:
             ("filter_layer_2_thickness", "h"),
             ("filter_layer_3_element_z", "h"),
             ("filter_layer_3_thickness", "h"),
-            ("filter_n", "h"),
+            ("_filter_n", "h"),
             ("detector_temp_celsius", "f"),
             ("ambient_temp_fahrenheit", "f"),
             ("vacuum_state", "i"),
             ("energy_per_channel", "f"),
-            ("other", "h"),
-            ("energy_channel_start", "f"),
-            ("spectrum_year", "h"),
-            ("spectrum_month", "h"),
-            ("spectrum_datetimedayofweek", "h"),
-            ("spectrum_day", "h"),
-            ("spectrum_hour", "h"),
-            ("spectrum_minute", "h"),
-            ("spectrum_second", "h"),
-            ("spectrum_millisecond", "h"),
+            ("_other", "h"),
+            ("_energy_channel_start", "f"),
+            ("_spectrum_year", "h"),
+            ("_spectrum_month", "h"),
+            ("_spectrum_datetimedayofweek", "h"),
+            ("_spectrum_day", "h"),
+            ("_spectrum_hour", "h"),
+            ("_spectrum_minute", "h"),
+            ("_spectrum_second", "h"),
+            ("_spectrum_millisecond", "h"),
             ("nose_pressure", "f"),
-            ("n_channels", "h"),
+            ("_n_channels", "h"),
             ("nose_temp_celsius", "h"),
-            ("other", "h"),
+            ("_other", "h"),
             ("name", "s"),
-            ("other", "h"),
+            ("_other", "h"),
         ]
 
-        self.read_pdz_data()
-        self.datetime = self.spectrum_1.datetime
+        self._read_pdz_data()
+        self.datetime = self.spectra[0].datetime
 
-    def read_bytes(self, fmt, size):
-        return unpack(fmt, self.pdz_file_reader.read(size))[0]
+    def _read_bytes(self, fmt: str, size: int):
+        return unpack(fmt, self._pdz_file_reader.read(size))[0]
 
-    def read_n_bytes(self, size):
-        return self.pdz_file_reader.read(size)
+    def _read_n_bytes(self, size: int):
+        return self._pdz_file_reader.read(size)
 
-    def read_string(self):
-        return self.pdz_file_reader.read(self.read_bytes("<i", 4) * 2).decode("utf16")
+    def _read_string(self):
+        return self._pdz_file_reader.read(self._read_bytes("<i", 4) * 2).decode("utf16")
 
-    def read_spectrum_params(self, spectrum: XRFSpectrum):
-        for attr, fmt in self.spectrum_attr_formats:
-            value = self.dispatch[fmt]()
+    def _read_spectrum_params(self, spectrum: XRFSpectrum):
+        for attr, fmt in self._spectrum_attr_formats:
+            value = self._dispatch[fmt]()
             spectrum.__setattr__(attr, value)
 
         spectrum.ambient_temp_celsius = (spectrum.ambient_temp_fahrenheit - 32) / 1.8
 
-    def read_spectrum_counts(self, spectrum: XRFSpectrum):
-        for _ in range(spectrum.n_channels):
-            spectrum.counts.append(self.read_bytes("<i", 4))
+    def _read_spectrum_counts(self, spectrum: XRFSpectrum):
+        for _ in range(spectrum._n_channels):
+            spectrum.counts.append(self._read_bytes("<i", 4))
 
-    def read_pdz_data(self):
-        with open(self.pdz_file_path, "rb") as self.pdz_file_reader:
-            for attr, fmt in self.pdz_attr_formats_1:
-                self.__setattr__(attr, self.dispatch[fmt]())
+    def _append_spectrum(self):
+        self.spectra.append(XRFSpectrum())
+        self._read_spectrum_params(self.spectra[-1])
+        self._read_spectrum_counts(self.spectra[-1])
+        self.spectra[-1].calculate_energies_list()
+        self.phase_count += 1
 
-            for _ in range(self.firmware_vers_list_len):
-                self.read_bytes("h", 2)
-                self.read_string()
+    def _read_pdz_data(self):
+        with open(self.pdz_file_path, "rb") as self._pdz_file_reader:
+            for attr, fmt in self._pdz_attr_formats_1:
+                self.__setattr__(attr, self._dispatch[fmt]())
+
+            for _ in range(self._firmware_vers_list_len):
+                self._read_bytes("h", 2)
+                self._read_string()
 
             self.anode_element_symbol = element_z_to_symbol(int(self.anode_element_z))
             self.anode_element_name = element_z_to_name(int(self.anode_element_z))
             self.tube_type = f"{self.tube_name}:{self.tube_number}"
 
-            for attr, fmt in self.pdz_attr_formats_2:
-                self.__setattr__(attr, self.dispatch[fmt]())
+            for attr, fmt in self._pdz_attr_formats_2:
+                self.__setattr__(attr, self._dispatch[fmt]())
 
-            self.spectrum_1 = XRFSpectrum()
-            self.read_spectrum_params(self.spectrum_1)
-            self.read_spectrum_counts(self.spectrum_1)
-            self.spectrum_1.calculate_energies_list()
-            self.phasecount = 1
-
-            if self.read_bytes("h", 2) == 3:
-                self.phasecount += 1
-                self.spectrum_2 = XRFSpectrum()
-                self.read_spectrum_params(self.spectrum_2)
-                self.read_spectrum_counts(self.spectrum_2)
-                self.spectrum_2.calculate_energies_list()
-
-                if self.read_bytes("h", 2) == 3:
-                    self.phasecount += 1
-                    self.spectrum_3 = XRFSpectrum()
-                    self.read_spectrum_params(self.spectrum_3)
-                    self.read_spectrum_counts(self.spectrum_3)
-                    self.spectrum_3.calculate_energies_list()
+            self._append_spectrum()
+            if self._read_bytes("h", 2) == 3:
+                self._append_spectrum()
+                if self._read_bytes("h", 2) == 3:
+                    self._append_spectrum()
