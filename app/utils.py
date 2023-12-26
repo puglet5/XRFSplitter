@@ -420,8 +420,8 @@ def select_data(data: Results, data_range: list[int] = [0]):
 def data_to_csv(data: list[list[str]]):
     data.insert(0, RESULT_KEYS)
     sio = StringIO()
-    csvWriter = csv.writer(sio)
-    csvWriter.writerows(data)
+    csv_writer = csv.writer(sio)
+    csv_writer.writerows(data)
     sio.seek(0)
     return sio
 
