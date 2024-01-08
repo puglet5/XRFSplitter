@@ -420,7 +420,7 @@ def select_data(data: Results, data_range: list[int] = [0]):
 def data_to_csv(data: list[list[str]]):
     data.insert(0, RESULT_KEYS)
     sio = StringIO()
-    csv_writer = csv.writer(sio)
+    csv_writer = csv.writer(sio, quotechar="'")
     csv_writer.writerows(data)
     sio.seek(0)
     return sio
@@ -454,7 +454,7 @@ def element_z_to_name(z):
 @dataclass
 class XRFSpectrum:
     datetime: dt = field(default=dt(1970, 1, 1, 0), init=False)
-    counts: list[int] = field(default_factory=list, init=False)
+    counts: list[float] = field(default_factory=list, init=False)
     energies: list[float] = field(default_factory=list, init=False)
     source_voltage: float = field(default=0.0, init=False)  # in kV
     source_current: float = field(default=0.0, init=False)  # in uA

@@ -10,6 +10,7 @@ numpy = "*"
 pyinstaller = "*"
 usb-monitor = "*"
 xrfsplitter = {file = ".", editable = true}
+dearpygui = "*"
 
 [dev-packages]
 black = "*"
