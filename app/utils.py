@@ -402,13 +402,13 @@ def construct_data(filepath: Path):
     return results_data
 
 
-def select_data(data: Results, data_range: list[int] = [0]):
+def select_data(data: Results, data_range: list[int] = [0], keys=RESULT_KEYS):
     max_data_number = max([int(s) for s in data.keys()]) + 1
     if data_range[0] is not None and len(data_range) == 1:
         data_range.append(max_data_number)
 
     data_selected = [
-        [data.get(str(i), {}).get(k) for k in RESULT_KEYS] for i in range(*data_range)
+        [data.get(str(i), {}).get(k) for k in keys] for i in range(*data_range)
     ]
     data_strings: list[list[str]] = [
         [i or "" for i in res] for res in data_selected if any(res)
@@ -417,8 +417,8 @@ def select_data(data: Results, data_range: list[int] = [0]):
     return data_strings
 
 
-def data_to_csv(data: list[list[str]]):
-    data.insert(0, RESULT_KEYS)
+def data_to_csv(data: list[list[str]], keys=RESULT_KEYS):
+    data.insert(0, keys)
     sio = StringIO()
     csv_writer = csv.writer(sio, quotechar="'")
     csv_writer.writerows(data)
