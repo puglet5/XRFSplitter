@@ -357,7 +357,7 @@ with dpg.window(label="xrfsplitter", tag="primary"):
         dpg.add_text("?", tag="range_tooltip")
 
         with dpg.tooltip("range_tooltip"):
-            dpg.add_text("-1 indicated no upper limit")
+            dpg.add_text("-1 indicates no upper limit")
 
     dpg.add_group(tag="data", horizontal=False)
 
