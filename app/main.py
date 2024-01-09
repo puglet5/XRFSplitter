@@ -1,7 +1,7 @@
 import functools
 import logging
 import logging.config
-from operator import call
+import time
 
 import dearpygui.dearpygui as dpg
 import pandas as pd
@@ -19,31 +19,28 @@ def sort_callback(sender: int, sort_specs: None | list[list[int]]):
     if sort_specs is None:
         return
 
-    rows = dpg.get_item_children(sender, 1)
+    sort_col_id = sort_specs[0][0]
+    sort_col_label: str = dpg.get_item_configuration(sort_col_id)["label"]
+    table_data = dpg.get_item_user_data("results")
 
-    if rows is None:
+    if table_data is None:
         return
 
-    sort_col_id = sort_specs[0][0]
+    df: pd.DataFrame = table_data["df"].copy()
+    key = functools.cmp_to_key(sorter)
 
-    cols: list[int] = dpg.get_item_children(sender)[0]  # type: ignore
+    arr = df[sort_col_label].tolist()
+    sorted_arr_ids = [
+        b[0] for b in sorted(enumerate(arr), key=key, reverse=sort_specs[0][1] < 0)
+    ]
 
-    sort_column = sort_col_id - cols[0]
+    df = pd.DataFrame(df.reset_index(drop=True), index=sorted_arr_ids)
+    df.reset_index(drop=True, inplace=True)
 
-    sortable_list = []
-
-    for row in rows:
-        cells: list[int] = dpg.get_item_children(row, 1)  # type: ignore
-        sortable_list.append([row, dpg.get_item_label(cells[sort_column])])
-
-    sortable_list = sorted(
-        sortable_list,
-        key=functools.cmp_to_key(column_sorter),
-        reverse=sort_specs[0][1] < 0,
-    )
-    new_order = [pair[0] for pair in sortable_list]
-
-    dpg.reorder_items(sender, 1, new_order)
+    with dpg.mutex():
+        table_data["df"] = df
+        dpg.set_item_user_data("results", table_data)
+        show_selected_rows()
 
 
 def on_key_lq():
@@ -55,44 +52,11 @@ with dpg.handler_registry():
     dpg.add_key_press_handler(dpg.mvKey_Control, callback=on_key_lq)
 
 
-def column_sorter(x, y):
-    strx: str = x[1].strip()
-    stry: str = y[1].strip()
-
-    try:
-        x = float(strx)
-        y = float(stry)
-
-        if x < y:
-            return -1
-        elif x > y:
-            return 1
-        else:
-            return 0
-
-    except ValueError:
-        x = strx
-        y = stry
-
-    if x == "" and y == "< LOD":
-        return -1
-    if y == "" and x == "< LOD":
-        return 1
-    if x == "" or x == "< LOD" and y != x:
-        return -1
-    if y == "" or y == "< LOD" and x != y:
-        return 1
-    if x < y:
-        return -1
-    elif x > y:
-        return 1
-    else:
-        return 0
-
-
 def enable_table_controls():
     dpg.enable_item("err col checkbox")
     dpg.show_item("err col checkbox")
+    dpg.enable_item("junk col checkbox")
+    dpg.show_item("junk col checkbox")
 
 
 def toggle_table_columns(keys: list[str], state: bool):
@@ -101,20 +65,58 @@ def toggle_table_columns(keys: list[str], state: bool):
         original_df: pd.DataFrame = table_data["original_df"]
         current_df: pd.DataFrame = table_data["df"]
         if state:
-            df = original_df.filter(current_df.columns.tolist() + keys)
+            columns_to_show = current_df.columns.tolist() + keys
+            original_columns = original_df.columns.tolist()
+            ordered_intersection = sorted(
+                set(original_columns) & set(columns_to_show), key=original_columns.index
+            )
+            df = original_df[ordered_intersection]
         else:
             df = current_df.drop(keys, axis=1)
 
-        dpg.delete_item("results", children_only=True)
+        with dpg.mutex():
+            table_data["df"] = df
+            dpg.set_item_user_data("results", table_data)
+            show_selected_rows()
+
+
+def select_rows(df: pd.DataFrame):
+    row_range: tuple[int, int] = (dpg.get_value("from"), dpg.get_value("to"))
+    if row_range[1] == -1:
+        df = df.loc[pd.to_numeric(df["File #"]) >= row_range[0]]
+    else:
+        df = df.loc[
+            pd.to_numeric(df["File #"]).isin(range(row_range[0], row_range[1] + 1))
+        ]
+
+    return df
+
+
+def show_selected_rows():
+    table_data = dpg.get_item_user_data("results")
+    if table_data is not None:
+        df: pd.DataFrame = table_data["df"]
+        df = select_rows(df)
+
         with dpg.mutex():
             populate_table(df)
 
 
 def populate_table(df: pd.DataFrame):
+    try:
+        dpg.delete_item("results", children_only=True)
+    except:
+        pass
+
     arr = df.to_numpy()
+
     for i in range(df.shape[1]):
         dpg.add_table_column(
-            label=df.columns[i], tag=f"{df.columns[i]}", parent="results"
+            label=df.columns[i],
+            tag=f"{df.columns[i]}",
+            parent="results",
+            prefer_sort_ascending=False,
+            prefer_sort_descending=True,
         )
     for i in range(df.shape[0]):
         with dpg.table_row(parent="results"):
@@ -123,10 +125,7 @@ def populate_table(df: pd.DataFrame):
 
 
 def create_table(path: Path):
-    if dpg.get_value("err col checkbox"):
-        keys = RESULT_KEYS
-    else:
-        keys = RESULT_KEYS_NO_ERR
+    keys = RESULT_KEYS
 
     try:
         dpg.delete_item("results")
@@ -134,24 +133,30 @@ def create_table(path: Path):
         pass
 
     csv_data = construct_data(path)
-    selected_data = select_data(csv_data, [0, 3000], keys)
+    selected_data = select_data(
+        csv_data,
+        [0],
+        keys,
+    )
     df = pd.read_csv(data_to_csv(selected_data, keys), dtype=str).fillna("")
-    df = df.apply(pd.to_numeric, errors="coerce", downcast="signed").fillna(df)
+    # df = df.apply(pd.to_numeric, errors="coerce", downcast="signed").fillna(df)
 
-    with dpg.table(
+    dpg.add_table(
         user_data={"original_df": df, "df": df, "path": path},
         label="Results",
         tag="results",
-        parent="stuff",
+        parent="data",
         header_row=True,
         hideable=False,
         resizable=True,
-        clipper=False,
+        clipper=True,
         freeze_columns=1,
+        freeze_rows=1,
         scrollX=True,
         scrollY=True,
         sortable=True,
         callback=sort_callback,
+        delay_search=True,
         policy=dpg.mvTable_SizingFixedFit,
         borders_outerH=True,
         borders_innerV=True,
@@ -161,7 +166,9 @@ def create_table(path: Path):
         precise_widths=True,
         height=-1,
         width=-1,
-    ):
+    )
+
+    with dpg.mutex():
         populate_table(df)
 
     enable_table_controls()
@@ -182,7 +189,7 @@ def pdz_file_dialog_callback(_, app_data):
     with dpg.plot(
         label="Plots",
         tag="plots",
-        parent="stuff",
+        parent="data",
         before="results",
         height=600,
         width=-1,
@@ -312,7 +319,47 @@ with dpg.window(label="xrfsplitter", tag="primary"):
         show=False,
     )
 
-    dpg.add_group(tag="stuff", horizontal=False)
+    dpg.add_checkbox(
+        label="Show junk columns",
+        default_value=True,
+        tag="junk col checkbox",
+        callback=lambda _s, a: toggle_table_columns(RESULTS_JUNK, a),
+        enabled=False,
+        show=False,
+    )
+
+    dpg.add_text("File # range")
+    with dpg.group(horizontal=True):
+        dpg.add_text("From")
+        dpg.add_input_int(
+            tag="from",
+            width=100,
+            max_value=10000,
+            min_value=1,
+            min_clamped=True,
+            max_clamped=True,
+            default_value=1,
+            on_enter=True,
+            callback=lambda s_, a_: show_selected_rows(),
+        )
+        dpg.add_text("to")
+        dpg.add_input_int(
+            tag="to",
+            width=100,
+            max_value=10000,
+            min_value=-1,
+            default_value=-1,
+            min_clamped=True,
+            max_clamped=True,
+            on_enter=True,
+            callback=lambda s_, a_: show_selected_rows(),
+        )
+        dpg.add_text("?", tag="range_tooltip")
+
+        with dpg.tooltip("range_tooltip"):
+            dpg.add_text("-1 indicated no upper limit")
+
+    dpg.add_group(tag="data", horizontal=False)
 
     pdz_file_dialog_callback(
         "",

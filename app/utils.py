@@ -133,6 +133,23 @@ Results = dict[str, Result]
 RESULT_KEYS: list[str] = list(Result.__dict__["__annotations__"].keys())
 RESULT_KEYS_NO_ERR = list(filter(lambda s: " Err" not in s, RESULT_KEYS))
 RESULT_KEYS_ERR = list(filter(lambda s: " Err" in s, RESULT_KEYS))
+RESULTS_JUNK = [
+    "Operator",
+    "ID",
+    "Field1",
+    "Field2",
+    "Multiplier",
+    "Cal Check",
+    "Name",
+    "Application",
+    "ElapsedTime",
+    "Alloy 1",
+    "Match Qual 1",
+    "Alloy 2",
+    "Match Qual 2",
+    "Alloy 3",
+    "Match Qual 3",
+]
 FMTS = Literal["B", "h", "i", "I", "f", "s", "10", "5"]
 ELEMENT_SYMBOLS = [
     "H",
@@ -374,6 +391,41 @@ ELEMENT_NAMES = [
     "Tennessine",
     "Oganesson",
 ]
+
+
+def sorter(x, y):
+    strx: str = str(x[1]).strip()
+    stry: str = str(y[1]).strip()
+
+    try:
+        x = float(strx)
+        y = float(stry)
+
+        if x < y:
+            return -1
+        elif x > y:
+            return 1
+        else:
+            return 0
+
+    except ValueError:
+        x = strx
+        y = stry
+
+    if x == "" and y == "< LOD":
+        return -1
+    if y == "" and x == "< LOD":
+        return 1
+    if x == "" or x == "< LOD" and y != x:
+        return -1
+    if y == "" or y == "< LOD" and x != y:
+        return 1
+    if x < y:
+        return -1
+    elif x > y:
+        return 1
+    else:
+        return 0
 
 
 def construct_data(filepath: Path):
