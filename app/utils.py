@@ -132,6 +132,7 @@ Result = TypedDict(
 Results = dict[str, Result]
 RESULT_KEYS: list[str] = list(Result.__dict__["__annotations__"].keys())
 RESULT_KEYS_NO_ERR = list(filter(lambda s: " Err" not in s, RESULT_KEYS))
+RESULT_KEYS_ERR = list(filter(lambda s: " Err" in s, RESULT_KEYS))
 FMTS = Literal["B", "h", "i", "I", "f", "s", "10", "5"]
 ELEMENT_SYMBOLS = [
     "H",

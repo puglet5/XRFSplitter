@@ -1,3 +1,4 @@
+import functools
 import logging
 import logging.config
 from operator import call
@@ -15,9 +16,6 @@ dpg.create_viewport(title="xrf_splitter", width=1920, height=1080)
 
 
 def sort_callback(sender: int, sort_specs: None | list[list[int]]):
-    def _sorter(e):
-        return e[1]
-
     if sort_specs is None:
         return
 
@@ -38,29 +36,14 @@ def sort_callback(sender: int, sort_specs: None | list[list[int]]):
         cells: list[int] = dpg.get_item_children(row, 1)  # type: ignore
         sortable_list.append([row, dpg.get_item_label(cells[sort_column])])
 
-    sortable_list.sort(key=_sorter, reverse=sort_specs[0][1] < 0)
+    sortable_list = sorted(
+        sortable_list,
+        key=functools.cmp_to_key(column_sorter),
+        reverse=sort_specs[0][1] < 0,
+    )
     new_order = [pair[0] for pair in sortable_list]
 
     dpg.reorder_items(sender, 1, new_order)
-
-
-def show_table_columns(keys: list[str]):
-    for k in RESULT_KEYS:
-        dpg.configure_item(k, enabled=False)
-        dpg.hide_item(k)
-
-    for k in keys:
-        dpg.configure_item(k, enabled=True)
-        dpg.show_item(k)
-
-    print([i for i, e in enumerate(keys) if e in RESULT_KEYS])
-
-
-def toggle_err_columns():
-    if dpg.get_item_configuration("Li Err")["show"]:
-        show_table_columns(RESULT_KEYS_NO_ERR)
-    else:
-        show_table_columns(RESULT_KEYS)
 
 
 def on_key_lq():
@@ -70,6 +53,73 @@ def on_key_lq():
 
 with dpg.handler_registry():
     dpg.add_key_press_handler(dpg.mvKey_Control, callback=on_key_lq)
+
+
+def column_sorter(x, y):
+    strx: str = x[1].strip()
+    stry: str = y[1].strip()
+
+    try:
+        x = float(strx)
+        y = float(stry)
+
+        if x < y:
+            return -1
+        elif x > y:
+            return 1
+        else:
+            return 0
+
+    except ValueError:
+        x = strx
+        y = stry
+
+    if x == "" and y == "< LOD":
+        return -1
+    if y == "" and x == "< LOD":
+        return 1
+    if x == "" or x == "< LOD" and y != x:
+        return -1
+    if y == "" or y == "< LOD" and x != y:
+        return 1
+    if x < y:
+        return -1
+    elif x > y:
+        return 1
+    else:
+        return 0
+
+
+def enable_table_controls():
+    dpg.enable_item("err col checkbox")
+    dpg.show_item("err col checkbox")
+
+
+def toggle_table_columns(keys: list[str], state: bool):
+    table_data = dpg.get_item_user_data("results")
+    if table_data is not None:
+        original_df: pd.DataFrame = table_data["original_df"]
+        current_df: pd.DataFrame = table_data["df"]
+        if state:
+            df = original_df.filter(current_df.columns.tolist() + keys)
+        else:
+            df = current_df.drop(keys, axis=1)
+
+        dpg.delete_item("results", children_only=True)
+        with dpg.mutex():
+            populate_table(df)
+
+
+def populate_table(df: pd.DataFrame):
+    arr = df.to_numpy()
+    for i in range(df.shape[1]):
+        dpg.add_table_column(
+            label=df.columns[i], tag=f"{df.columns[i]}", parent="results"
+        )
+    for i in range(df.shape[0]):
+        with dpg.table_row(parent="results"):
+            for j in range(df.shape[1]):
+                dpg.add_selectable(label=f"{arr[i,j]}", span_columns=True)
 
 
 def create_table(path: Path):
@@ -87,14 +137,14 @@ def create_table(path: Path):
     selected_data = select_data(csv_data, [0, 3000], keys)
     df = pd.read_csv(data_to_csv(selected_data, keys), dtype=str).fillna("")
     df = df.apply(pd.to_numeric, errors="coerce", downcast="signed").fillna(df)
-    arr = df.to_numpy()
 
     with dpg.table(
-        user_data=path,
+        user_data={"original_df": df, "df": df, "path": path},
         label="Results",
         tag="results",
         parent="stuff",
         header_row=True,
+        hideable=False,
         resizable=True,
         clipper=False,
         freeze_columns=1,
@@ -112,18 +162,9 @@ def create_table(path: Path):
         height=-1,
         width=-1,
     ):
-        for i in range(df.shape[1]):
-            dpg.add_table_column(label=df.columns[i], tag=f"{df.columns[i]}")
-        for i in range(df.shape[0]):
-            with dpg.table_row():
-                for j in range(df.shape[1]):
-                    dpg.add_selectable(label=f"{arr[i,j]}", span_columns=True)
+        populate_table(df)
 
-    dpg.enable_item("err col checkbox")
-    dpg.enable_item("empty col checkbox")
-
-    dpg.show_item("err col checkbox")
-    dpg.show_item("empty col checkbox")
+    enable_table_controls()
 
 
 def csv_file_dialog_callback(_, app_data):
@@ -176,8 +217,8 @@ def pdz_file_dialog_callback(_, app_data):
     return None
 
 
-def file_dialog_cancel_callback():
-    return None
+def file_dialog_cancel_callback(_s, _a):
+    ...
 
 
 with dpg.file_dialog(
@@ -266,19 +307,25 @@ with dpg.window(label="xrfsplitter", tag="primary"):
         label="Show Err columns",
         default_value=True,
         tag="err col checkbox",
-        callback=lambda _s, _a: toggle_err_columns(),
-        enabled=False,
-        show=False,
-    )
-    dpg.add_checkbox(
-        label="Remove empty columns",
-        default_value=False,
-        tag="empty col checkbox",
+        callback=lambda _s, a: toggle_table_columns(RESULT_KEYS_ERR, a),
         enabled=False,
         show=False,
     )
 
     dpg.add_group(tag="stuff", horizontal=False)
+
+    pdz_file_dialog_callback(
+        "",
+        {
+            "file_path_name": "/home/puglet5/Documents/PROJ/XRFSplitter/test/fixtures/01968-GeoMining.pdz"
+        },
+    )
+    csv_file_dialog_callback(
+        "",
+        {
+            "file_path_name": "/home/puglet5/Documents/PROJ/XRFSplitter/test/fixtures/results.csv"
+        },
+    )
 
 dpg.bind_theme(global_theme)
 dpg.setup_dearpygui()
