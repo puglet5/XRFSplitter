@@ -256,11 +256,22 @@ with dpg.file_dialog(
     dpg.add_file_extension("*")
 
 with dpg.theme() as global_theme:
+    with dpg.theme_component(dpg.mvAll):
+        dpg.add_theme_style(
+            dpg.mvStyleVar_FrameBorderSize, 1, category=dpg.mvThemeCat_Core
+        )
+
     with dpg.theme_component(dpg.mvLineSeries):
         dpg.add_theme_style(
             dpg.mvPlotStyleVar_LineWeight, 2, category=dpg.mvThemeCat_Plots
         )
 
+    with dpg.theme_component(dpg.mvAll):
+        dpg.add_theme_color(
+            dpg.mvThemeCol_Header,
+            (0, 119, 200, 60),
+            category=dpg.mvThemeCat_Core,
+        )
 
 with dpg.window(label="xrfsplitter", tag="primary"):
     with dpg.menu_bar():
