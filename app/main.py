@@ -1,5 +1,6 @@
 import logging
 import logging.config
+from operator import call
 
 import dearpygui.dearpygui as dpg
 import pandas as pd
@@ -14,10 +15,16 @@ dpg.create_viewport(title="xrf_splitter", width=1920, height=1080)
 
 
 def sort_callback(sender: int, sort_specs: None | list[list[int]]):
+    def _sorter(e):
+        return e[1]
+
     if sort_specs is None:
         return
 
     rows = dpg.get_item_children(sender, 1)
+
+    if rows is None:
+        return
 
     sort_col_id = sort_specs[0][0]
 
@@ -26,25 +33,34 @@ def sort_callback(sender: int, sort_specs: None | list[list[int]]):
     sort_column = sort_col_id - cols[0]
 
     sortable_list = []
-    if rows is None:
-        return
 
     for row in rows:
         cells: list[int] = dpg.get_item_children(row, 1)  # type: ignore
-        first_cell = cells[sort_column]
-        sortable_list.append([row, dpg.get_item_label(first_cell)])
-
-    def _sorter(e):
-        return e[1]
+        sortable_list.append([row, dpg.get_item_label(cells[sort_column])])
 
     sortable_list.sort(key=_sorter, reverse=sort_specs[0][1] < 0)
-
-    # create list of just sorted row ids
-    new_order = []
-    for pair in sortable_list:
-        new_order.append(pair[0])
+    new_order = [pair[0] for pair in sortable_list]
 
     dpg.reorder_items(sender, 1, new_order)
+
+
+def show_table_columns(keys: list[str]):
+    for k in RESULT_KEYS:
+        dpg.configure_item(k, enabled=False)
+        dpg.hide_item(k)
+
+    for k in keys:
+        dpg.configure_item(k, enabled=True)
+        dpg.show_item(k)
+
+    print([i for i, e in enumerate(keys) if e in RESULT_KEYS])
+
+
+def toggle_err_columns():
+    if dpg.get_item_configuration("Li Err")["show"]:
+        show_table_columns(RESULT_KEYS_NO_ERR)
+    else:
+        show_table_columns(RESULT_KEYS)
 
 
 def on_key_lq():
@@ -72,12 +88,14 @@ def create_table(path: Path):
     df = pd.read_csv(data_to_csv(selected_data, keys), dtype=str).fillna("")
     df = df.apply(pd.to_numeric, errors="coerce", downcast="signed").fillna(df)
     arr = df.to_numpy()
+
     with dpg.table(
+        user_data=path,
         label="Results",
         tag="results",
-        parent="primary",
+        parent="stuff",
         header_row=True,
-        resizable=False,
+        resizable=True,
         clipper=False,
         freeze_columns=1,
         scrollX=True,
@@ -91,7 +109,8 @@ def create_table(path: Path):
         borders_outerV=True,
         reorderable=True,
         precise_widths=True,
-        height=400,
+        height=-1,
+        width=-1,
     ):
         for i in range(df.shape[1]):
             dpg.add_table_column(label=df.columns[i], tag=f"{df.columns[i]}")
@@ -100,10 +119,15 @@ def create_table(path: Path):
                 for j in range(df.shape[1]):
                     dpg.add_selectable(label=f"{arr[i,j]}", span_columns=True)
 
+    dpg.enable_item("err col checkbox")
+    dpg.enable_item("empty col checkbox")
+
+    dpg.show_item("err col checkbox")
+    dpg.show_item("empty col checkbox")
+
 
 def csv_file_dialog_callback(_, app_data):
     create_table(Path(app_data["file_path_name"]))
-    print(dpg.get_value("results"))
     return None
 
 
@@ -117,9 +141,10 @@ def pdz_file_dialog_callback(_, app_data):
     with dpg.plot(
         label="Plots",
         tag="plots",
-        parent="primary",
+        parent="stuff",
+        before="results",
         height=600,
-        width=800,
+        width=-1,
         crosshairs=True,
         anti_aliased=True,
     ):
@@ -165,6 +190,7 @@ with dpg.file_dialog(
     height=400,
 ):
     dpg.add_file_extension(".pdz")
+    dpg.add_file_extension("*")
 
 
 with dpg.file_dialog(
@@ -179,16 +205,13 @@ with dpg.file_dialog(
     height=400,
 ):
     dpg.add_file_extension(".csv")
+    dpg.add_file_extension("*")
 
 with dpg.theme() as global_theme:
     with dpg.theme_component(dpg.mvLineSeries):
         dpg.add_theme_style(
             dpg.mvPlotStyleVar_LineWeight, 2, category=dpg.mvThemeCat_Plots
         )
-
-
-def filter_callback(sender, filter_string):
-    dpg.set_value("filter_id", filter_string)
 
 
 with dpg.window(label="xrfsplitter", tag="primary"):
@@ -228,22 +251,34 @@ with dpg.window(label="xrfsplitter", tag="primary"):
                 callback=lambda: dpg.show_tool(dpg.mvTool_ItemRegistry),
             )
 
-    dpg.add_button(
-        label="Select spectra",
-        callback=lambda: dpg.show_item("pdz_dialog"),
-    )
+    with dpg.group(horizontal=True):
+        dpg.add_button(
+            label="Select spectra",
+            callback=lambda: dpg.show_item("pdz_dialog"),
+        )
 
-    dpg.add_button(
-        label="Select results table",
-        callback=lambda: dpg.show_item("csv_dialog"),
-    )
+        dpg.add_button(
+            label="Select results table",
+            callback=lambda: dpg.show_item("csv_dialog"),
+        )
 
     dpg.add_checkbox(
-        label="Show Err columns", default_value=True, tag="err col checkbox"
+        label="Show Err columns",
+        default_value=True,
+        tag="err col checkbox",
+        callback=lambda _s, _a: toggle_err_columns(),
+        enabled=False,
+        show=False,
     )
     dpg.add_checkbox(
-        label="Remove empty columns", default_value=False, tag="empty col checkbox"
+        label="Remove empty columns",
+        default_value=False,
+        tag="empty col checkbox",
+        enabled=False,
+        show=False,
     )
+
+    dpg.add_group(tag="stuff", horizontal=False)
 
 dpg.bind_theme(global_theme)
 dpg.setup_dearpygui()
