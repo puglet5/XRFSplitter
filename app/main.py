@@ -18,7 +18,7 @@ dpg.create_context()
 dpg.create_viewport(title="xrf_splitter", width=1920, height=1080)
 
 with dpg.font_registry():
-    with dpg.font("app/fonts/fira.ttf", 13) as default_font:
+    with dpg.font("app/fonts/default.ttf", 13) as default_font:
         dpg.add_font_range_hint(dpg.mvFontRangeHint_Default)
         dpg.add_font_range_hint(dpg.mvFontRangeHint_Cyrillic)
 
@@ -482,7 +482,7 @@ with dpg.window(label="xrfsplitter", tag="primary", autosize=True, user_data={})
                 dpg.get_item_user_data("results_table").get("df")  # type:ignore
             ),
         )
-        dpg.add_text("?", tag="range_tooltip")
+        dpg.add_text("(?)", tag="range_tooltip", color=(200, 200, 200, 100))
 
         with dpg.tooltip("range_tooltip"):
             dpg.add_text("-1 indicates no upper limit")
