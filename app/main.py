@@ -1,6 +1,7 @@
 import functools
 import logging
 import logging.config
+import os
 import time
 
 import dearpygui.dearpygui as dpg
@@ -110,6 +111,39 @@ def show_selected_rows(df):
         populate_table(df)
 
 
+def row_select_callback(s, a):
+    spectrum_label = dpg.get_item_configuration(s)["label"]
+    data = dpg.get_item_user_data("primary")
+    if data is None or not data:
+        return
+
+    table_data = dpg.get_item_user_data("results_table")
+    if table_data is None or not table_data:
+        return
+
+    if table_data.get("selections") is None:
+        table_data["selections"] = set()
+
+    folder: str = data.get("pdz_folder")
+    if folder is None or not folder:
+        return
+
+    try:
+        file = [
+            filename for filename in os.listdir(folder) if spectrum_label in filename
+        ][0]
+    except IndexError:
+        file = None
+
+    if not a and file:
+        dpg.delete_item(file)
+        table_data["selections"].remove(spectrum_label)
+
+    if a and file:
+        add_plot(f"{folder}/{file}")
+        table_data["selections"].add(spectrum_label)
+
+
 @timeit
 def populate_table(df: pd.DataFrame):
     try:
@@ -119,6 +153,12 @@ def populate_table(df: pd.DataFrame):
 
     arr = df.to_numpy()
     cols = df.columns
+
+    table_data = dpg.get_item_user_data("results_table")
+    if table_data is None or not table_data:
+        table_data = {"selections": set()}
+
+    selections: set[str] = table_data["selections"]
 
     for i in range(arr.shape[1]):
         dpg.add_table_column(
@@ -132,7 +172,21 @@ def populate_table(df: pd.DataFrame):
     for i in range(arr.shape[0]):
         with dpg.table_row(parent="results_table"):
             for j in range(arr.shape[1]):
-                dpg.add_selectable(label=f"{arr[i,j]}", span_columns=True)
+                if j == 0:
+                    dpg.add_selectable(
+                        label=f"{arr[i,j]}",
+                        span_columns=True,
+                        tag=f"{arr[i,j]}",
+                        callback=row_select_callback,
+                    )
+                else:
+                    dpg.add_selectable(
+                        label=f"{arr[i,j]}",
+                        span_columns=True,
+                        callback=row_select_callback,
+                    )
+
+            dpg.configure_item(arr[i, 0], default_value=(arr[i, 0] in selections))
 
     if dpg.get_value("highlight"):
         highlight_table()
@@ -157,7 +211,7 @@ def create_table(path: Path):
     df = pd.read_csv(data_to_csv(selected_data, keys), dtype=str).fillna("")
 
     dpg.add_table(
-        user_data={"original_df": df, "df": df, "path": path},
+        user_data={"original_df": df, "df": df, "path": path, "selections": set()},
         label="Results",
         tag="results_table",
         parent="data",
@@ -248,14 +302,21 @@ def add_plot(path: str):
     dpg.add_line_series(
         pdz.spectra[2].energies,
         spectra_sum,
+        tag=pdz.name,
         label=f"[1+2] {pdz.name}",
         parent="y_axis",
     )
 
 
 def pdz_file_dialog_callback(_, app_data):
-    for v in app_data["selections"].values():
-        add_plot(v)
+    data: dict | None = dpg.get_item_user_data("primary")
+    if data is None:
+        data = {}
+    pdz_folder = app_data.get("file_path_name")
+    dpg.set_item_user_data("primary", {**data, **{"pdz_folder": pdz_folder}})
+    print(dpg.get_item_user_data("primary"))
+    # for v in app_data["selections"].values():
+    #     add_plot(v)
 
 
 def file_dialog_cancel_callback(_s, _a):
@@ -263,10 +324,11 @@ def file_dialog_cancel_callback(_s, _a):
 
 
 with dpg.file_dialog(
-    directory_selector=False,
+    directory_selector=True,
     show=False,
     callback=pdz_file_dialog_callback,
     tag="pdz_dialog",
+    file_count=1,
     cancel_callback=file_dialog_cancel_callback,
     width=700,
     height=400,
@@ -307,7 +369,7 @@ with dpg.theme() as global_theme:
             category=dpg.mvThemeCat_Core,
         )
 
-with dpg.window(label="xrfsplitter", tag="primary", autosize=True):
+with dpg.window(label="xrfsplitter", tag="primary", autosize=True, user_data={}):
     with dpg.menu_bar():
         with dpg.menu(label="File"):
             dpg.add_menu_item(label="Save As")
@@ -346,7 +408,7 @@ with dpg.window(label="xrfsplitter", tag="primary", autosize=True):
 
     with dpg.group(horizontal=True):
         dpg.add_button(
-            label="Select spectra",
+            label="Select spectra folder",
             callback=lambda: dpg.show_item("pdz_dialog"),
         )
 
@@ -395,7 +457,7 @@ with dpg.window(label="xrfsplitter", tag="primary", autosize=True):
             min_value=1,
             min_clamped=True,
             max_clamped=True,
-            default_value=2000,
+            default_value=1850,
             on_enter=True,
             callback=lambda _s, _a: show_selected_rows(
                 dpg.get_item_user_data("results_table").get("df")  # type:ignore
@@ -407,7 +469,7 @@ with dpg.window(label="xrfsplitter", tag="primary", autosize=True):
             width=100,
             max_value=10000,
             min_value=-1,
-            default_value=-1,
+            default_value=1880,
             min_clamped=True,
             max_clamped=True,
             on_enter=True,
@@ -461,11 +523,7 @@ with dpg.window(label="xrfsplitter", tag="primary", autosize=True):
 
     pdz_file_dialog_callback(
         "",
-        {
-            "selections": {
-                "1": "/home/puglet5/Documents/PROJ/XRFSplitter/test/fixtures/01968-GeoMining.pdz"
-            }
-        },
+        {"file_path_name": "/home/puglet5/Documents/PROJ/test_data/smalts pdz"},
     )
     csv_file_dialog_callback(
         "",
