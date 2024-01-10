@@ -4,7 +4,9 @@ import logging.config
 import time
 
 import dearpygui.dearpygui as dpg
+import numpy as np
 import pandas as pd
+from matplotlib import table
 
 from app.utils import *
 
@@ -15,32 +17,31 @@ dpg.create_context()
 dpg.create_viewport(title="xrf_splitter", width=1920, height=1080)
 
 
+@timeit
 def sort_callback(sender: int, sort_specs: None | list[list[int]]):
     if sort_specs is None:
         return
 
     sort_col_id = sort_specs[0][0]
     sort_col_label: str = dpg.get_item_configuration(sort_col_id)["label"]
-    table_data = dpg.get_item_user_data("results")
+    table_data = dpg.get_item_user_data("results_table")
 
-    if table_data is None:
+    if table_data is None or not table_data:
         return
 
-    df: pd.DataFrame = table_data["df"].copy()
-    key = functools.cmp_to_key(sorter)
+    df: pd.DataFrame = table_data["df"]
 
     arr = df[sort_col_label].tolist()
     sorted_arr_ids = [
-        b[0] for b in sorted(enumerate(arr), key=key, reverse=sort_specs[0][1] < 0)
+        b[0]
+        for b in sorted(enumerate(arr), key=pd_sorter, reverse=sort_specs[0][1] < 0)
     ]
 
-    df = pd.DataFrame(df.reset_index(drop=True), index=sorted_arr_ids)
-    df.reset_index(drop=True, inplace=True)
+    df = df.iloc[sorted_arr_ids, :]
 
-    with dpg.mutex():
-        table_data["df"] = df
-        dpg.set_item_user_data("results", table_data)
-        show_selected_rows()
+    table_data["df"] = df
+    dpg.set_item_user_data("results_table", table_data)
+    show_selected_rows(df)
 
 
 def on_key_lq():
@@ -52,15 +53,24 @@ with dpg.handler_registry():
     dpg.add_key_press_handler(dpg.mvKey_Control, callback=on_key_lq)
 
 
+pd_sorter = functools.cmp_to_key(sorter)
+
+
 def enable_table_controls():
     dpg.enable_item("err col checkbox")
     dpg.show_item("err col checkbox")
     dpg.enable_item("junk col checkbox")
     dpg.show_item("junk col checkbox")
+    dpg.enable_item("highlight")
+    dpg.show_item("highlight")
+    dpg.set_value("err col checkbox", False)
+    dpg.set_value("junk col checkbox", False)
+    toggle_table_columns(RESULTS_JUNK, False)
+    toggle_table_columns(RESULT_KEYS_ERR, False)
 
 
 def toggle_table_columns(keys: list[str], state: bool):
-    table_data = dpg.get_item_user_data("results")
+    table_data = dpg.get_item_user_data("results_table")
     if table_data is not None:
         original_df: pd.DataFrame = table_data["original_df"]
         current_df: pd.DataFrame = table_data["df"]
@@ -74,14 +84,15 @@ def toggle_table_columns(keys: list[str], state: bool):
         else:
             df = current_df.drop(keys, axis=1)
 
-        with dpg.mutex():
-            table_data["df"] = df
-            dpg.set_item_user_data("results", table_data)
-            show_selected_rows()
+        table_data["df"] = df
+        dpg.set_item_user_data("results_table", table_data)
+        show_selected_rows(df)
+        unhighlight_table()
 
 
 def select_rows(df: pd.DataFrame):
     row_range: tuple[int, int] = (dpg.get_value("from"), dpg.get_value("to"))
+
     if row_range[1] == -1:
         df = df.loc[pd.to_numeric(df["File #"]) >= row_range[0]]
     else:
@@ -92,43 +103,48 @@ def select_rows(df: pd.DataFrame):
     return df
 
 
-def show_selected_rows():
-    table_data = dpg.get_item_user_data("results")
-    if table_data is not None:
-        df: pd.DataFrame = table_data["df"]
-        df = select_rows(df)
+def show_selected_rows(df):
+    df = select_rows(df)
 
-        with dpg.mutex():
-            populate_table(df)
+    with dpg.mutex():
+        populate_table(df)
 
 
+@timeit
 def populate_table(df: pd.DataFrame):
     try:
-        dpg.delete_item("results", children_only=True)
+        dpg.delete_item("results_table", children_only=True)
     except:
         pass
 
     arr = df.to_numpy()
+    cols = df.columns
 
-    for i in range(df.shape[1]):
+    for i in range(arr.shape[1]):
         dpg.add_table_column(
-            label=df.columns[i],
-            tag=f"{df.columns[i]}",
-            parent="results",
+            label=cols[i],
+            tag=f"{cols[i]}",
+            parent="results_table",
             prefer_sort_ascending=False,
             prefer_sort_descending=True,
         )
-    for i in range(df.shape[0]):
-        with dpg.table_row(parent="results"):
-            for j in range(df.shape[1]):
+
+    for i in range(arr.shape[0]):
+        with dpg.table_row(parent="results_table"):
+            for j in range(arr.shape[1]):
                 dpg.add_selectable(label=f"{arr[i,j]}", span_columns=True)
+
+    if dpg.get_value("highlight"):
+        highlight_table()
+    else:
+        unhighlight_table()
 
 
 def create_table(path: Path):
     keys = RESULT_KEYS
 
     try:
-        dpg.delete_item("results")
+        dpg.delete_item("results_table")
     except:
         pass
 
@@ -139,12 +155,11 @@ def create_table(path: Path):
         keys,
     )
     df = pd.read_csv(data_to_csv(selected_data, keys), dtype=str).fillna("")
-    # df = df.apply(pd.to_numeric, errors="coerce", downcast="signed").fillna(df)
 
     dpg.add_table(
         user_data={"original_df": df, "df": df, "path": path},
         label="Results",
-        tag="results",
+        tag="results_table",
         parent="data",
         header_row=True,
         hideable=False,
@@ -154,8 +169,8 @@ def create_table(path: Path):
         freeze_rows=1,
         scrollX=True,
         scrollY=True,
-        sortable=True,
-        callback=sort_callback,
+        sortable=False,
+        callback=lambda s, a: sort_callback(s, a),
         delay_search=True,
         policy=dpg.mvTable_SizingFixedFit,
         borders_outerH=True,
@@ -169,59 +184,78 @@ def create_table(path: Path):
     )
 
     with dpg.mutex():
-        populate_table(df)
+        show_selected_rows(df)
 
     enable_table_controls()
 
+    dpg.configure_item("results_table", sortable=True)
+
 
 def csv_file_dialog_callback(_, app_data):
-    create_table(Path(app_data["file_path_name"]))
-    return None
+    create_table(Path(list(app_data["selections"].values())[0]))
 
 
-def pdz_file_dialog_callback(_, app_data):
-    pdz = PDZFile(app_data["file_path_name"])
+def toggle_highlight_table():
+    if dpg.get_value("highlight"):
+        highlight_table()
+    else:
+        unhighlight_table()
+
+
+def unhighlight_table():
+    table_data = dpg.get_item_user_data("results_table")
+    if table_data is None or not table_data:
+        return
+
+    df = select_rows(table_data["df"])
+
+    for i in range(df.shape[0]):
+        for j in range(df.shape[1]):
+            dpg.unhighlight_table_cell("results_table", i, j)
+
+
+def highlight_table():
+    table_data = dpg.get_item_user_data("results_table")
+    if table_data is None or not table_data:
+        return
+
+    df = select_rows(table_data["df"])
+
+    col_ids = [df.columns.get_loc(c) for c in RESULT_ELEMENTS if c in df]
+    for row in range(df.shape[0]):
+        arr = df.iloc[row, col_ids].replace(["< LOD", ""], 0).to_numpy().astype(float)
+        t = np.nan_to_num(arr / np.max(arr), nan=0)
+        for i, e in enumerate(t):
+            sample = dpg.sample_colormap(dpg.mvPlotColormap_Jet, e)
+            color = np.array(sample) * np.array(
+                [255, 255, 255, np.clip([e * 100 + 25], 0, 100)[0]]
+            )
+            try:
+                dpg.highlight_table_cell(
+                    "results_table", row, col_ids[i], color.tolist()
+                )
+            except:
+                pass
+
+
+def add_plot(path: str):
+    pdz = PDZFile(path)
     spectra_sum = [
         pdz.spectra[1].counts[i] + pdz.spectra[2].counts[i]
         for i, _ in enumerate(pdz.spectra[1].counts)
     ]
 
-    with dpg.plot(
-        label="Plots",
-        tag="plots",
-        parent="data",
-        before="results",
-        height=600,
-        width=-1,
-        crosshairs=True,
-        anti_aliased=True,
-    ):
-        dpg.add_plot_legend(location=9)
-        dpg.add_plot_axis(dpg.mvXAxis, label="Energy, kEv")
-        dpg.add_plot_axis(dpg.mvYAxis, label="Counts", tag="y_axis")
+    dpg.add_line_series(
+        pdz.spectra[2].energies,
+        spectra_sum,
+        label=f"[1+2] {pdz.name}",
+        parent="y_axis",
+    )
 
-        dpg.add_line_series(
-            pdz.spectra[1].energies,
-            pdz.spectra[1].counts,
-            label=f"[1] {pdz.name}",
-            parent="y_axis",
-        )
 
-        dpg.add_line_series(
-            pdz.spectra[2].energies,
-            pdz.spectra[2].counts,
-            label=f"[2] {pdz.name}",
-            parent="y_axis",
-        )
-
-        dpg.add_line_series(
-            pdz.spectra[2].energies,
-            spectra_sum,
-            label=f"[1+2] {pdz.name}",
-            parent="y_axis",
-        )
-
-    return None
+def pdz_file_dialog_callback(_, app_data):
+    for v in app_data["selections"].values():
+        add_plot(v)
 
 
 def file_dialog_cancel_callback(_s, _a):
@@ -245,7 +279,7 @@ with dpg.file_dialog(
     directory_selector=False,
     show=False,
     modal=True,
-    default_filename="results",
+    default_filename="Results",
     callback=csv_file_dialog_callback,
     tag="csv_dialog",
     cancel_callback=file_dialog_cancel_callback,
@@ -273,7 +307,7 @@ with dpg.theme() as global_theme:
             category=dpg.mvThemeCat_Core,
         )
 
-with dpg.window(label="xrfsplitter", tag="primary"):
+with dpg.window(label="xrfsplitter", tag="primary", autosize=True):
     with dpg.menu_bar():
         with dpg.menu(label="File"):
             dpg.add_menu_item(label="Save As")
@@ -339,7 +373,19 @@ with dpg.window(label="xrfsplitter", tag="primary"):
         show=False,
     )
 
-    dpg.add_text("File # range")
+    dpg.add_checkbox(
+        label="Highlight table",
+        tag="highlight",
+        default_value=False,
+        callback=toggle_highlight_table,
+        show=False,
+        enabled=(
+            not dpg.get_value("err col checkbox")
+            and not dpg.get_value("junk col checkbox")
+        ),
+    )
+
+    dpg.add_text("File # range:")
     with dpg.group(horizontal=True):
         dpg.add_text("From")
         dpg.add_input_int(
@@ -349,9 +395,11 @@ with dpg.window(label="xrfsplitter", tag="primary"):
             min_value=1,
             min_clamped=True,
             max_clamped=True,
-            default_value=1,
+            default_value=2000,
             on_enter=True,
-            callback=lambda s_, a_: show_selected_rows(),
+            callback=lambda _s, _a: show_selected_rows(
+                dpg.get_item_user_data("results_table").get("df")  # type:ignore
+            ),
         )
         dpg.add_text("to")
         dpg.add_input_int(
@@ -363,27 +411,71 @@ with dpg.window(label="xrfsplitter", tag="primary"):
             min_clamped=True,
             max_clamped=True,
             on_enter=True,
-            callback=lambda s_, a_: show_selected_rows(),
+            callback=lambda s, _a: show_selected_rows(
+                dpg.get_item_user_data("results_table").get("df")  # type:ignore
+            ),
         )
         dpg.add_text("?", tag="range_tooltip")
 
         with dpg.tooltip("range_tooltip"):
             dpg.add_text("-1 indicates no upper limit")
 
-    dpg.add_group(tag="data", horizontal=False)
+    with dpg.group(tag="data", horizontal=False):
+        with dpg.plot(
+            label="Plots",
+            tag="plots",
+            height=600,
+            width=-1,
+            crosshairs=True,
+            anti_aliased=True,
+        ):
+            dpg.add_plot_legend(location=9)
+            dpg.add_plot_axis(dpg.mvXAxis, label="Energy, kEv")
+            dpg.add_plot_axis(dpg.mvYAxis, label="Counts", tag="y_axis")
+
+        with dpg.table(
+            label="Results table",
+            tag="results_table",
+            user_data={},
+            header_row=True,
+            hideable=False,
+            resizable=True,
+            clipper=True,
+            freeze_columns=1,
+            freeze_rows=1,
+            scrollX=True,
+            scrollY=True,
+            sortable=False,
+            delay_search=True,
+            policy=dpg.mvTable_SizingFixedFit,
+            borders_outerH=True,
+            borders_innerV=True,
+            borders_innerH=True,
+            borders_outerV=True,
+            reorderable=True,
+            precise_widths=True,
+            height=-1,
+            width=-1,
+        ):
+            dpg.add_table_column(label="File #")
 
     pdz_file_dialog_callback(
         "",
         {
-            "file_path_name": "/home/puglet5/Documents/PROJ/XRFSplitter/test/fixtures/01968-GeoMining.pdz"
+            "selections": {
+                "1": "/home/puglet5/Documents/PROJ/XRFSplitter/test/fixtures/01968-GeoMining.pdz"
+            }
         },
     )
     csv_file_dialog_callback(
         "",
         {
-            "file_path_name": "/home/puglet5/Documents/PROJ/XRFSplitter/test/fixtures/results.csv"
+            "selections": {
+                "1": "/home/puglet5/Documents/PROJ/XRFSplitter/test/fixtures/Results.csv"
+            }
         },
     )
+
 
 dpg.bind_theme(global_theme)
 dpg.setup_dearpygui()

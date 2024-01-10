@@ -2,9 +2,10 @@ import csv
 import logging as log
 import os
 import shutil
+import time
 from dataclasses import dataclass, field
 from datetime import datetime as dt
-from functools import partial
+from functools import partial, wraps
 from io import StringIO
 from pathlib import Path
 from struct import unpack
@@ -130,27 +131,6 @@ Result = TypedDict(
     },
 )
 Results = dict[str, Result]
-RESULT_KEYS: list[str] = list(Result.__dict__["__annotations__"].keys())
-RESULT_KEYS_NO_ERR = list(filter(lambda s: " Err" not in s, RESULT_KEYS))
-RESULT_KEYS_ERR = list(filter(lambda s: " Err" in s, RESULT_KEYS))
-RESULTS_JUNK = [
-    "Operator",
-    "ID",
-    "Field1",
-    "Field2",
-    "Multiplier",
-    "Cal Check",
-    "Name",
-    "Application",
-    "ElapsedTime",
-    "Alloy 1",
-    "Match Qual 1",
-    "Alloy 2",
-    "Match Qual 2",
-    "Alloy 3",
-    "Match Qual 3",
-]
-FMTS = Literal["B", "h", "i", "I", "f", "s", "10", "5"]
 ELEMENT_SYMBOLS = [
     "H",
     "He",
@@ -391,6 +371,28 @@ ELEMENT_NAMES = [
     "Tennessine",
     "Oganesson",
 ]
+RESULT_KEYS: list[str] = list(Result.__dict__["__annotations__"].keys())
+RESULT_KEYS_NO_ERR = list(filter(lambda s: " Err" not in s, RESULT_KEYS))
+RESULT_KEYS_ERR = list(filter(lambda s: " Err" in s, RESULT_KEYS))
+RESULT_ELEMENTS = [i for i in RESULT_KEYS if i in ELEMENT_SYMBOLS]
+RESULTS_JUNK = [
+    "Operator",
+    "ID",
+    "Field1",
+    "Field2",
+    "Multiplier",
+    "Cal Check",
+    "Name",
+    "Application",
+    "ElapsedTime",
+    "Alloy 1",
+    "Match Qual 1",
+    "Alloy 2",
+    "Match Qual 2",
+    "Alloy 3",
+    "Match Qual 3",
+]
+FMTS = Literal["B", "h", "i", "I", "f", "s", "10", "5"]
 
 
 def sorter(x, y):
@@ -710,3 +712,16 @@ class PDZFile:
                 self._append_spectrum()
                 if self._read_bytes("h", 2) == 3:
                     self._append_spectrum()
+
+
+def timeit(func: Callable):
+    @wraps(func)
+    def timeit_wrapper(*args, **kwargs):
+        start_time = time.perf_counter()
+        result = func(*args, **kwargs)
+        end_time = time.perf_counter()
+        total_time = end_time - start_time
+        print(f"{func.__name__} took {total_time} s.")
+        return result
+
+    return timeit_wrapper
