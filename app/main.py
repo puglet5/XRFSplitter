@@ -2,12 +2,10 @@ import functools
 import logging
 import logging.config
 import os
-import time
 
 import dearpygui.dearpygui as dpg
 import numpy as np
 import pandas as pd
-from matplotlib import table
 
 from app.utils import *
 
@@ -17,10 +15,10 @@ logger = logging.getLogger(__name__)
 dpg.create_context()
 dpg.create_viewport(title="xrf_splitter", width=1920, height=1080)
 
-with dpg.font_registry():
-    with dpg.font("app/fonts/default.ttf", 13) as default_font:
-        dpg.add_font_range_hint(dpg.mvFontRangeHint_Default)
-        dpg.add_font_range_hint(dpg.mvFontRangeHint_Cyrillic)
+# with dpg.font_registry():
+#     with dpg.font("app/fonts/default.ttf", 13) as default_font:
+#         dpg.add_font_range_hint(dpg.mvFontRangeHint_Default)
+#         dpg.add_font_range_hint(dpg.mvFontRangeHint_Cyrillic)
 
 
 @timeit
@@ -526,20 +524,20 @@ with dpg.window(label="xrfsplitter", tag="primary", autosize=True, user_data={})
         ):
             dpg.add_table_column(label="File #")
 
-    dpg.bind_font(default_font)
+    # dpg.bind_font(default_font)
 
-    pdz_file_dialog_callback(
-        "",
-        {"file_path_name": "/home/puglet5/Documents/PROJ/test_data/smalts pdz"},
-    )
-    csv_file_dialog_callback(
-        "",
-        {
-            "selections": {
-                "1": "/home/puglet5/Documents/PROJ/XRFSplitter/test/fixtures/Results.csv"
-            }
-        },
-    )
+    # pdz_file_dialog_callback(
+    #     "",
+    #     {"file_path_name": "/home/puglet5/Documents/PROJ/test_data/smalts pdz"},
+    # )
+    # csv_file_dialog_callback(
+    #     "",
+    #     {
+    #         "selections": {
+    #             "1": "/home/puglet5/Documents/PROJ/XRFSplitter/test/fixtures/Results.csv"
+    #         }
+    #     },
+    # )
 
 
 dpg.bind_theme(global_theme)
