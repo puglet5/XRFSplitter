@@ -17,6 +17,11 @@ logger = logging.getLogger(__name__)
 dpg.create_context()
 dpg.create_viewport(title="xrf_splitter", width=1920, height=1080)
 
+with dpg.font_registry():
+    with dpg.font("app/fonts/fira.ttf", 13) as default_font:
+        dpg.add_font_range_hint(dpg.mvFontRangeHint_Default)
+        dpg.add_font_range_hint(dpg.mvFontRangeHint_Cyrillic)
+
 
 @timeit
 def sort_callback(sender: int, sort_specs: None | list[list[int]]):
@@ -520,6 +525,8 @@ with dpg.window(label="xrfsplitter", tag="primary", autosize=True, user_data={})
             width=-1,
         ):
             dpg.add_table_column(label="File #")
+
+    dpg.bind_font(default_font)
 
     pdz_file_dialog_callback(
         "",
