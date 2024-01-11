@@ -13,7 +13,7 @@ from app.utils import *
 logger = logging.getLogger(__name__)
 
 dpg.create_context()
-dpg.create_viewport(title="xrf_splitter", width=1920, height=1080)
+dpg.create_viewport(title="xrf_splitter", width=1920, height=1080, vsync=False)
 
 # with dpg.font_registry():
 #     with dpg.font("app/fonts/default.ttf", 13) as default_font:
@@ -141,10 +141,13 @@ def row_select_callback(s, a):
     if not a and file:
         dpg.delete_item(file)
         table_data["selections"].remove(spectrum_label)
-
-    if a and file:
+    elif a and file:
         add_plot(f"{folder}/{file}")
         table_data["selections"].add(spectrum_label)
+    elif a:
+        table_data["selections"].add(spectrum_label)
+    elif not a:
+        table_data["selections"].remove(spectrum_label)
 
 
 @timeit
@@ -155,7 +158,7 @@ def populate_table(df: pd.DataFrame):
         pass
 
     arr = df.to_numpy()
-    cols = df.columns
+    cols = df.columns.to_numpy()
 
     table_data = dpg.get_item_user_data("results_table")
     if table_data is None or not table_data:
@@ -166,35 +169,49 @@ def populate_table(df: pd.DataFrame):
     for i in range(arr.shape[1]):
         dpg.add_table_column(
             label=cols[i],
-            tag=f"{cols[i]}",
+            # tag=f"{cols[i]}",
             parent="results_table",
             prefer_sort_ascending=False,
             prefer_sort_descending=True,
         )
 
     for i in range(arr.shape[0]):
-        with dpg.table_row(parent="results_table"):
-            for j in range(arr.shape[1]):
-                if j == 0:
-                    dpg.add_selectable(
-                        label=f"{arr[i,j]}",
-                        span_columns=True,
-                        tag=f"{arr[i,j]}",
-                        callback=row_select_callback,
-                    )
-                else:
-                    dpg.add_selectable(
-                        label=f"{arr[i,j]}",
-                        span_columns=True,
-                        callback=row_select_callback,
-                    )
-
-            dpg.configure_item(arr[i, 0], default_value=(arr[i, 0] in selections))
+        with dpg.table_row(
+            parent="results_table",
+            use_internal_label=False,
+        ):
+            dpg.add_selectable(
+                label=f"{arr[i,0]}",
+                tag=f"{arr[i,0]}",
+                span_columns=True,
+                disable_popup_close=True,
+                use_internal_label=False,
+                default_value=(arr[i, 0] in selections),
+                callback=row_select_callback,
+            )
+            for j in range(1, arr.shape[1]):
+                dpg.add_selectable(
+                    label=f"{arr[i,j]}",
+                    disable_popup_close=True,
+                    use_internal_label=False,
+                )
 
     if dpg.get_value("highlight"):
         highlight_table()
     else:
         unhighlight_table()
+
+
+def deselect_all():
+    table_data = dpg.get_item_user_data("results_table")
+    if table_data is None or not table_data:
+        table_data = {"selections": set()}
+
+    selections: set[str] = table_data["selections"]
+
+    for s in list(selections):
+        dpg.set_value(s, False)
+        row_select_callback(s, False)
 
 
 def create_table(path: Path):
@@ -282,10 +299,12 @@ def highlight_table():
     for row in range(df.shape[0]):
         arr = df.iloc[row, col_ids].replace(["< LOD", ""], 0).to_numpy().astype(float)
         t = np.nan_to_num(arr / np.max(arr), nan=0)
+        t = np.log(t + 0.01)
+        t = np.interp(t, (t.min(), t.max()), (0, 1))
         for i, e in enumerate(t):
             sample = dpg.sample_colormap(dpg.mvPlotColormap_Jet, e)
             color = np.array(sample) * np.array(
-                [255, 255, 255, np.clip([e * 100 + 25], 0, 100)[0]]
+                [255, 255, 255, np.clip([e * 100 + 20], 0, 100)[0]]
             )
             try:
                 dpg.highlight_table_cell(
@@ -408,6 +427,10 @@ with dpg.window(label="xrfsplitter", tag="primary", autosize=True, user_data={})
                 label="Show Item Registry",
                 callback=lambda: dpg.show_tool(dpg.mvTool_ItemRegistry),
             )
+            dpg.add_menu_item(
+                label="Show Colormap Registry",
+                callback=lambda: dpg.show_item("__demo_colormap_registry"),
+            )
 
     with dpg.group(horizontal=True):
         dpg.add_button(
@@ -420,70 +443,9 @@ with dpg.window(label="xrfsplitter", tag="primary", autosize=True, user_data={})
             callback=lambda: dpg.show_item("csv_dialog"),
         )
 
-    dpg.add_checkbox(
-        label="Show Err columns",
-        default_value=True,
-        tag="err col checkbox",
-        callback=lambda _s, a: toggle_table_columns(RESULT_KEYS_ERR, a),
-        enabled=False,
-        show=False,
+    dpg.add_colormap_registry(
+        label="Demo Colormap Registry", tag="__demo_colormap_registry"
     )
-
-    dpg.add_checkbox(
-        label="Show junk columns",
-        default_value=True,
-        tag="junk col checkbox",
-        callback=lambda _s, a: toggle_table_columns(RESULTS_JUNK, a),
-        enabled=False,
-        show=False,
-    )
-
-    dpg.add_checkbox(
-        label="Highlight table",
-        tag="highlight",
-        default_value=False,
-        callback=toggle_highlight_table,
-        show=False,
-        enabled=(
-            not dpg.get_value("err col checkbox")
-            and not dpg.get_value("junk col checkbox")
-        ),
-    )
-
-    dpg.add_text("File # range:")
-    with dpg.group(horizontal=True):
-        dpg.add_text("From")
-        dpg.add_input_int(
-            tag="from",
-            width=100,
-            max_value=10000,
-            min_value=1,
-            min_clamped=True,
-            max_clamped=True,
-            default_value=1850,
-            on_enter=True,
-            callback=lambda _s, _a: show_selected_rows(
-                dpg.get_item_user_data("results_table").get("df")  # type:ignore
-            ),
-        )
-        dpg.add_text("to")
-        dpg.add_input_int(
-            tag="to",
-            width=100,
-            max_value=10000,
-            min_value=-1,
-            default_value=1880,
-            min_clamped=True,
-            max_clamped=True,
-            on_enter=True,
-            callback=lambda s, _a: show_selected_rows(
-                dpg.get_item_user_data("results_table").get("df")  # type:ignore
-            ),
-        )
-        dpg.add_text("(?)", tag="range_tooltip", color=(200, 200, 200, 100))
-
-        with dpg.tooltip("range_tooltip"):
-            dpg.add_text("-1 indicates no upper limit")
 
     with dpg.group(tag="data", horizontal=False):
         with dpg.plot(
@@ -497,7 +459,72 @@ with dpg.window(label="xrfsplitter", tag="primary", autosize=True, user_data={})
             dpg.add_plot_legend(location=9)
             dpg.add_plot_axis(dpg.mvXAxis, label="Energy, kEv")
             dpg.add_plot_axis(dpg.mvYAxis, label="Counts", tag="y_axis")
+        with dpg.group(tag="table_controls", horizontal=True):
+            dpg.add_checkbox(
+                label="Show Err columns",
+                default_value=True,
+                tag="err col checkbox",
+                callback=lambda _s, a: toggle_table_columns(RESULT_KEYS_ERR, a),
+                enabled=False,
+                show=False,
+            )
 
+            dpg.add_checkbox(
+                label="Show junk columns",
+                default_value=True,
+                tag="junk col checkbox",
+                callback=lambda _s, a: toggle_table_columns(RESULTS_JUNK, a),
+                enabled=False,
+                show=False,
+            )
+
+            dpg.add_checkbox(
+                label="Highlight table",
+                tag="highlight",
+                default_value=False,
+                callback=toggle_highlight_table,
+                show=False,
+                enabled=(
+                    not dpg.get_value("err col checkbox")
+                    and not dpg.get_value("junk col checkbox")
+                ),
+            )
+
+            dpg.add_text("File # range:")
+            with dpg.group(horizontal=True):
+                dpg.add_text("From")
+                dpg.add_input_int(
+                    tag="from",
+                    width=100,
+                    max_value=10000,
+                    min_value=1,
+                    min_clamped=True,
+                    max_clamped=True,
+                    default_value=1,
+                    on_enter=True,
+                    callback=lambda _s, _a: show_selected_rows(
+                        dpg.get_item_user_data("results_table").get("df")  # type:ignore
+                    ),
+                )
+                dpg.add_text("to")
+                dpg.add_input_int(
+                    tag="to",
+                    width=100,
+                    max_value=10000,
+                    min_value=-1,
+                    default_value=-1,
+                    min_clamped=True,
+                    max_clamped=True,
+                    on_enter=True,
+                    callback=lambda s, _a: show_selected_rows(
+                        dpg.get_item_user_data("results_table").get("df")  # type:ignore
+                    ),
+                )
+                dpg.add_text("(?)", tag="range_tooltip", color=(200, 200, 200, 100))
+
+                with dpg.tooltip("range_tooltip"):
+                    dpg.add_text("-1 indicates no upper limit")
+            dpg.add_button(label="Deselect all", callback=lambda _s, _a: deselect_all())
         with dpg.table(
             label="Results table",
             tag="results_table",
@@ -526,19 +553,18 @@ with dpg.window(label="xrfsplitter", tag="primary", autosize=True, user_data={})
 
     # dpg.bind_font(default_font)
 
-    # pdz_file_dialog_callback(
-    #     "",
-    #     {"file_path_name": "/home/puglet5/Documents/PROJ/test_data/smalts pdz"},
-    # )
-    # csv_file_dialog_callback(
-    #     "",
-    #     {
-    #         "selections": {
-    #             "1": "/home/puglet5/Documents/PROJ/XRFSplitter/test/fixtures/Results.csv"
-    #         }
-    #     },
-    # )
-
+    pdz_file_dialog_callback(
+        "",
+        {"file_path_name": "/home/puglet5/Documents/Lab/smalts pdz"},
+    )
+    csv_file_dialog_callback(
+        "",
+        {
+            "selections": {
+                "1": "/home/puglet5/Documents/PROJ/xrfsplitter/test/fixtures/results.csv"
+            }
+        },
+    )
 
 dpg.bind_theme(global_theme)
 dpg.setup_dearpygui()
