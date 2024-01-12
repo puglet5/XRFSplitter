@@ -164,7 +164,7 @@ def row_select_callback(s, a):
 def populate_table(df: pd.DataFrame):
     try:
         dpg.delete_item("results_table", children_only=True)
-    except:
+    except Exception:
         pass
 
     arr = df.to_numpy()
@@ -326,7 +326,7 @@ def highlight_table():
             color = [sample[i] * norm[i] for i in range(len(sample))]
             try:
                 dpg.highlight_table_cell("results_table", row_i, column, color)
-            except:
+            except Exception:
                 pass
 
 
