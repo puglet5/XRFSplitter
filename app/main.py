@@ -177,21 +177,18 @@ def populate_table(df: pd.DataFrame):
     if not table_data["selections"]:
         table_data["selections"] = {}
 
-    selections = table_data["selections"].keys()
+    selections = table_data["selections"]
 
-    for i in range(arr.shape[1]):
+    for col in cols:
         dpg.add_table_column(
-            label=cols[i],
+            label=col,
             parent="results_table",
             prefer_sort_ascending=False,
             prefer_sort_descending=True,
         )
 
     for i in range(arr.shape[0]):
-        with dpg.table_row(
-            parent="results_table",
-            use_internal_label=False,
-        ):
+        with dpg.table_row(use_internal_label=False, parent="results_table"):
             dpg.add_selectable(
                 label=f"{arr[i,0]}",
                 span_columns=True,
@@ -199,6 +196,7 @@ def populate_table(df: pd.DataFrame):
                 use_internal_label=False,
                 default_value=(arr[i, 0] in selections),
                 callback=row_select_callback,
+                id=selections.get(arr[i, 0], 0),
             )
             for j in range(1, arr.shape[1]):
                 dpg.add_selectable(
