@@ -3,15 +3,16 @@ import logging
 import logging.config
 import os
 
+import coloredlogs
 import dearpygui.dearpygui as dpg
 import numpy as np
-import numpy.typing as npt
 import pandas as pd
 
 from app.utils import *
 
-# logging.config.fileConfig(fname=r"logging.conf", disable_existing_loggers=False)
+logging.basicConfig(filename="./log/main.log", filemode="a")
 logger = logging.getLogger(__name__)
+coloredlogs.install(level="DEBUG")
 
 dpg.create_context()
 dpg.create_viewport(title="xrf_splitter", width=1920, height=1080, vsync=False)
@@ -353,9 +354,6 @@ def pdz_file_dialog_callback(_, app_data):
         data = {}
     pdz_folder = app_data.get("file_path_name")
     dpg.set_item_user_data("primary", {**data, **{"pdz_folder": pdz_folder}})
-    print(dpg.get_item_user_data("primary"))
-    # for v in app_data["selections"].values():
-    #     add_plot(v)
 
 
 def file_dialog_cancel_callback(_s, _a):

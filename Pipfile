@@ -9,6 +9,7 @@ numpy = "*"
 usb-monitor = "*"
 xrfsplitter = {file = ".", editable = true}
 dearpygui = "*"
+coloredlogs = "*"
 
 [dev-packages]
 black = "*"

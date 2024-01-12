@@ -1,4 +1,5 @@
 import csv
+import logging
 import logging as log
 import os
 import shutil
@@ -10,6 +11,9 @@ from io import StringIO
 from pathlib import Path
 from struct import unpack
 from typing import Any, Callable, Literal, NotRequired, TypedDict
+
+logger = logging.getLogger(__name__)
+
 
 import pandas as pd
 
@@ -731,7 +735,7 @@ def timeit(func: Callable):
         result = func(*args, **kwargs)
         end_time = time.perf_counter()
         total_time = end_time - start_time
-        print(f"{func.__name__} took {total_time} s.")
+        logger.debug(f"{func.__name__}: {total_time} s.")
         return result
 
     return timeit_wrapper
