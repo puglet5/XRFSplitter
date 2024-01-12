@@ -5,6 +5,7 @@ import os
 
 import dearpygui.dearpygui as dpg
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 
 from app.utils import *
@@ -22,39 +23,46 @@ dpg.create_viewport(title="xrf_splitter", width=1920, height=1080, vsync=False)
 
 
 @timeit
-def sort_callback(sender: int, sort_specs: None | list[list[int]]):
+def sort_callback(_sender: int, sort_specs: None | list[list[int]]):
     if sort_specs is None:
         return
 
     sort_col_id = sort_specs[0][0]
     sort_col_label: str = dpg.get_item_configuration(sort_col_id)["label"]
-    table_data = dpg.get_item_user_data("results_table")
+    table_data: TableData | None = dpg.get_item_user_data("results_table")
 
     if table_data is None or not table_data:
         return
 
-    df: pd.DataFrame = table_data["df"]
+    unsorted_df = table_data["df"]
 
-    arr = df[sort_col_label].tolist()
+    arr = unsorted_df[sort_col_label].tolist()
     sorted_arr_ids = [
         b[0]
         for b in sorted(enumerate(arr), key=pd_sorter, reverse=sort_specs[0][1] < 0)
     ]
 
-    df = df.iloc[sorted_arr_ids, :]
+    if list(range(unsorted_df.shape[0])) == sorted_arr_ids:
+        return
+
+    df = unsorted_df.iloc[sorted_arr_ids, :]
 
     table_data["df"] = df
     dpg.set_item_user_data("results_table", table_data)
     show_selected_rows(df)
 
 
-def on_key_lq():
+def on_key_ctrl():
     if dpg.is_key_down(dpg.mvKey_Q):
         dpg.stop_dearpygui()
+    if dpg.is_key_down(dpg.mvKey_Alt):
+        if dpg.is_key_pressed(dpg.mvKey_M):
+            menubar_visible = dpg.get_item_configuration("primary")["menubar"]
+            dpg.configure_item("primary", menubar=(not menubar_visible))
 
 
 with dpg.handler_registry():
-    dpg.add_key_press_handler(dpg.mvKey_Control, callback=on_key_lq)
+    dpg.add_key_down_handler(dpg.mvKey_Control, callback=on_key_ctrl)
 
 
 pd_sorter = functools.cmp_to_key(sorter)
@@ -69,15 +77,15 @@ def enable_table_controls():
     dpg.show_item("highlight")
     dpg.set_value("err col checkbox", False)
     dpg.set_value("junk col checkbox", False)
-    toggle_table_columns(RESULTS_JUNK, False)
-    toggle_table_columns(RESULT_KEYS_ERR, False)
+    cols_to_hide = list(set(RESULTS_JUNK) | set(RESULT_KEYS_ERR))
+    toggle_table_columns(cols_to_hide, False)
 
 
 def toggle_table_columns(keys: list[str], state: bool):
-    table_data = dpg.get_item_user_data("results_table")
+    table_data: TableData | None = dpg.get_item_user_data("results_table")
     if table_data is not None:
-        original_df: pd.DataFrame = table_data["original_df"]
-        current_df: pd.DataFrame = table_data["df"]
+        original_df = table_data["original_df"]
+        current_df = table_data["df"]
         if state:
             columns_to_show = current_df.columns.tolist() + keys
             original_columns = original_df.columns.tolist()
@@ -94,6 +102,7 @@ def toggle_table_columns(keys: list[str], state: bool):
         unhighlight_table()
 
 
+@timeit
 def select_rows(df: pd.DataFrame):
     row_range: tuple[int, int] = (dpg.get_value("from"), dpg.get_value("to"))
 
@@ -120,12 +129,12 @@ def row_select_callback(s, a):
     if data is None or not data:
         return
 
-    table_data = dpg.get_item_user_data("results_table")
+    table_data: TableData | None = dpg.get_item_user_data("results_table")
     if table_data is None or not table_data:
         return
 
-    if table_data.get("selections") is None:
-        table_data["selections"] = set()
+    if not table_data.get("selections"):
+        table_data["selections"] = {}
 
     folder: str = data.get("pdz_folder")
     if folder is None or not folder:
@@ -140,14 +149,15 @@ def row_select_callback(s, a):
 
     if not a and file:
         dpg.delete_item(file)
-        table_data["selections"].remove(spectrum_label)
+        table_data["selections"].pop(spectrum_label)
     elif a and file:
         add_plot(f"{folder}/{file}")
-        table_data["selections"].add(spectrum_label)
+        table_data["selections"][spectrum_label] = s
     elif a:
-        table_data["selections"].add(spectrum_label)
+        table_data["selections"][spectrum_label] = s
+
     elif not a:
-        table_data["selections"].remove(spectrum_label)
+        table_data["selections"].pop(spectrum_label)
 
 
 @timeit
@@ -160,16 +170,18 @@ def populate_table(df: pd.DataFrame):
     arr = df.to_numpy()
     cols = df.columns.to_numpy()
 
-    table_data = dpg.get_item_user_data("results_table")
-    if table_data is None or not table_data:
-        table_data = {"selections": set()}
+    table_data: TableData | None = dpg.get_item_user_data("results_table")
+    if not table_data:
+        return
 
-    selections: set[str] = table_data["selections"]
+    if not table_data["selections"]:
+        table_data["selections"] = {}
+
+    selections = table_data["selections"].keys()
 
     for i in range(arr.shape[1]):
         dpg.add_table_column(
             label=cols[i],
-            # tag=f"{cols[i]}",
             parent="results_table",
             prefer_sort_ascending=False,
             prefer_sort_descending=True,
@@ -182,7 +194,6 @@ def populate_table(df: pd.DataFrame):
         ):
             dpg.add_selectable(
                 label=f"{arr[i,0]}",
-                tag=f"{arr[i,0]}",
                 span_columns=True,
                 disable_popup_close=True,
                 use_internal_label=False,
@@ -205,11 +216,11 @@ def populate_table(df: pd.DataFrame):
 def deselect_all():
     table_data = dpg.get_item_user_data("results_table")
     if table_data is None or not table_data:
-        table_data = {"selections": set()}
+        table_data = {"selections": {}}
 
-    selections: set[str] = table_data["selections"]
+    selections: dict = table_data["selections"]
 
-    for s in list(selections):
+    for s in list(selections.values()):
         dpg.set_value(s, False)
         row_select_callback(s, False)
 
@@ -217,10 +228,8 @@ def deselect_all():
 def create_table(path: Path):
     keys = RESULT_KEYS
 
-    try:
+    if dpg.does_item_exist("results_table"):
         dpg.delete_item("results_table")
-    except:
-        pass
 
     csv_data = construct_data(path)
     selected_data = select_data(
@@ -228,13 +237,23 @@ def create_table(path: Path):
         [0],
         keys,
     )
-    df = pd.read_csv(data_to_csv(selected_data, keys), dtype=str).fillna("")
+    df = (
+        pd.read_csv(
+            data_to_csv(selected_data, keys),
+            dtype=str,
+            delimiter=",",
+            header="infer",
+            index_col=False,
+            skipinitialspace=False,
+        )
+        .fillna("")
+        .iloc[::-1]
+    )
 
     dpg.add_table(
-        user_data={"original_df": df, "df": df, "path": path, "selections": set()},
+        user_data={"original_df": df, "df": df, "path": path, "selections": {}},
         label="Results",
         tag="results_table",
-        parent="data",
         header_row=True,
         hideable=False,
         resizable=True,
@@ -251,8 +270,8 @@ def create_table(path: Path):
         borders_innerV=True,
         borders_innerH=True,
         borders_outerV=True,
-        reorderable=True,
-        precise_widths=True,
+        reorderable=False,
+        precise_widths=False,
         height=-1,
         width=-1,
     )
@@ -266,7 +285,8 @@ def create_table(path: Path):
 
 
 def csv_file_dialog_callback(_, app_data):
-    create_table(Path(list(app_data["selections"].values())[0]))
+    path = Path(list(app_data["selections"].values())[0])
+    create_table(path)
 
 
 def toggle_highlight_table():
@@ -288,6 +308,7 @@ def unhighlight_table():
             dpg.unhighlight_table_cell("results_table", i, j)
 
 
+@timeit
 def highlight_table():
     table_data = dpg.get_item_user_data("results_table")
     if table_data is None or not table_data:
@@ -296,24 +317,22 @@ def highlight_table():
     df = select_rows(table_data["df"])
 
     col_ids = [df.columns.get_loc(c) for c in RESULT_ELEMENTS if c in df]
-    for row in range(df.shape[0]):
-        arr = df.iloc[row, col_ids].replace(["< LOD", ""], 0).to_numpy().astype(float)
-        t = np.nan_to_num(arr / np.max(arr), nan=0)
+    arr = df.iloc[:, col_ids].replace(["< LOD", ""], 0).to_numpy().astype(float)
+    for row_i, row in enumerate(arr):
+        t = np.nan_to_num(row / np.max(row), nan=0.0)
         t = np.log(t + 0.01)
-        t = np.interp(t, (t.min(), t.max()), (0, 1))
-        for i, e in enumerate(t):
-            sample = dpg.sample_colormap(dpg.mvPlotColormap_Jet, e)
-            color = np.array(sample) * np.array(
-                [255, 255, 255, np.clip([e * 100 + 20], 0, 100)[0]]
-            )
+        t = np.interp(t, (t.min(), t.max()), (0.0, 1.0))
+        for val, column in zip(t, col_ids):
+            sample = dpg.sample_colormap(dpg.mvPlotColormap_Jet, val)
+            norm = [255.0, 255.0, 255.0, min(val * 100.0 + 20.0, 100.0)]
+            color = [sample[i] * norm[i] for i in range(len(sample))]
             try:
-                dpg.highlight_table_cell(
-                    "results_table", row, col_ids[i], color.tolist()
-                )
+                dpg.highlight_table_cell("results_table", row_i, column, color)
             except:
                 pass
 
 
+@timeit
 def add_plot(path: str):
     pdz = PDZFile(path)
     spectra_sum = [
@@ -391,8 +410,10 @@ with dpg.theme() as global_theme:
             category=dpg.mvThemeCat_Core,
         )
 
-with dpg.window(label="xrfsplitter", tag="primary", autosize=True, user_data={}):
-    with dpg.menu_bar():
+with dpg.window(
+    label="xrfsplitter", tag="primary", autosize=True, menubar=False, user_data={}
+):
+    with dpg.menu_bar(tag="menu_bar"):
         with dpg.menu(label="File"):
             dpg.add_menu_item(label="Save As")
 
@@ -555,16 +576,17 @@ with dpg.window(label="xrfsplitter", tag="primary", autosize=True, user_data={})
 
     pdz_file_dialog_callback(
         "",
-        {"file_path_name": "/home/puglet5/Documents/Lab/smalts pdz"},
+        {"file_path_name": "/home/puglet5/Documents/PROJ/test_data/smalts pdz"},
     )
     csv_file_dialog_callback(
         "",
         {
             "selections": {
-                "1": "/home/puglet5/Documents/PROJ/xrfsplitter/test/fixtures/results.csv"
+                "1": "/home/puglet5/Documents/PROJ/XRFSplitter/test/fixtures/Results.csv"
             }
         },
     )
+
 
 dpg.bind_theme(global_theme)
 dpg.setup_dearpygui()

@@ -11,6 +11,8 @@ from pathlib import Path
 from struct import unpack
 from typing import Any, Callable, Literal, NotRequired, TypedDict
 
+import pandas as pd
+
 Result = TypedDict(
     "Result",
     {
@@ -376,6 +378,8 @@ RESULT_KEYS_NO_ERR = list(filter(lambda s: " Err" not in s, RESULT_KEYS))
 RESULT_KEYS_ERR = list(filter(lambda s: " Err" in s, RESULT_KEYS))
 RESULT_ELEMENTS = [i for i in RESULT_KEYS if i in ELEMENT_SYMBOLS]
 RESULTS_JUNK = [
+    "DateTime",
+    "Method",
     "Operator",
     "ID",
     "Field1",
@@ -393,6 +397,12 @@ RESULTS_JUNK = [
     "Match Qual 3",
 ]
 FMTS = Literal["B", "h", "i", "I", "f", "s", "10", "5"]
+
+
+class TableData(TypedDict):
+    df: pd.DataFrame
+    original_df: pd.DataFrame
+    selections: dict
 
 
 def sorter(x, y):
