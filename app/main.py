@@ -166,7 +166,7 @@ def populate_table(df: pd.DataFrame):
     try:
         dpg.delete_item("results_table", children_only=True)
     except Exception:
-        pass
+        logger.warn("No table found")
 
     arr = df.to_numpy()
     cols = df.columns.to_numpy()
@@ -328,7 +328,7 @@ def highlight_table():
             try:
                 dpg.highlight_table_cell("results_table", row_i, column, color)
             except Exception:
-                pass
+                logger.warn(f"Error highlighting table cell {row_i, column}")
 
 
 @timeit
