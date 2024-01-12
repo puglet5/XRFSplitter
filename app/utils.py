@@ -407,6 +407,7 @@ class TableData(TypedDict):
     df: pd.DataFrame
     original_df: pd.DataFrame
     selections: dict
+    path: str | Path
 
 
 def sorter(x, y):

@@ -8,8 +8,8 @@ pandas = "*"
 numpy = "*"
 usb-monitor = "*"
 xrfsplitter = {file = ".", editable = true}
-dearpygui = "*"
 coloredlogs = "*"
+dearpygui = "*"
 
 [dev-packages]
 black = "*"

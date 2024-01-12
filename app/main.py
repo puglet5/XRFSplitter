@@ -2,6 +2,7 @@ import functools
 import logging
 import logging.config
 import os
+from turtle import delay
 
 import coloredlogs
 import dearpygui.dearpygui as dpg
@@ -15,12 +16,9 @@ logger = logging.getLogger(__name__)
 coloredlogs.install(level="DEBUG")
 
 dpg.create_context()
-dpg.create_viewport(title="xrf_splitter", width=1920, height=1080, vsync=False)
-
-# with dpg.font_registry():
-#     with dpg.font("app/fonts/default.ttf", 13) as default_font:
-#         dpg.add_font_range_hint(dpg.mvFontRangeHint_Default)
-#         dpg.add_font_range_hint(dpg.mvFontRangeHint_Cyrillic)
+dpg.create_viewport(
+    title="xrf_splitter", width=2560, height=1440, vsync=True, decorated=False
+)
 
 
 @timeit
@@ -34,6 +32,8 @@ def sort_callback(_sender: int, sort_specs: None | list[list[int]]):
 
     if table_data is None or not table_data:
         return
+
+    table_data = table_data.copy()
 
     unsorted_df = table_data["df"]
 
@@ -78,32 +78,38 @@ def enable_table_controls():
     dpg.show_item("highlight")
     dpg.set_value("err col checkbox", False)
     dpg.set_value("junk col checkbox", False)
-    cols_to_hide = list(set(RESULTS_JUNK) | set(RESULT_KEYS_ERR))
-    toggle_table_columns(cols_to_hide, False)
 
 
 def toggle_table_columns(keys: list[str], state: bool):
     table_data: TableData | None = dpg.get_item_user_data("results_table")
-    if table_data is not None:
+    if table_data is None:
+        return
+
+    table_data = table_data.copy()
+
+    with dpg.mutex():
         original_df = table_data["original_df"]
         current_df = table_data["df"]
         if state:
             columns_to_show = current_df.columns.tolist() + keys
             original_columns = original_df.columns.tolist()
             ordered_intersection = sorted(
-                set(original_columns) & set(columns_to_show), key=original_columns.index
+                set(original_columns) & set(columns_to_show),
+                key=original_columns.index,
             )
-            df = original_df[ordered_intersection]
+            filtered_df = original_df[columns_to_show]
         else:
-            df = current_df.drop(keys, axis=1)
+            filtered_df = current_df.drop(keys, axis=1)
 
-        table_data["df"] = df
+        if filtered_df.equals(current_df):
+            return
+
+        table_data["df"] = filtered_df
         dpg.set_item_user_data("results_table", table_data)
-        show_selected_rows(df)
-        unhighlight_table()
+
+    show_selected_rows(filtered_df)
 
 
-@timeit
 def select_rows(df: pd.DataFrame):
     row_range: tuple[int, int] = (dpg.get_value("from"), dpg.get_value("to"))
 
@@ -117,11 +123,10 @@ def select_rows(df: pd.DataFrame):
     return df
 
 
-def show_selected_rows(df):
-    df = select_rows(df)
-
+def show_selected_rows(df: pd.DataFrame):
     with dpg.mutex():
-        populate_table(df)
+        filtered_df = select_rows(df)
+        populate_table(filtered_df)
 
 
 def row_select_callback(s, a):
@@ -176,9 +181,9 @@ def populate_table(df: pd.DataFrame):
         return
 
     if not table_data["selections"]:
-        table_data["selections"] = {}
+        selections = {}
 
-    selections = table_data["selections"]
+    selections = table_data["selections"].copy()
 
     for col in cols:
         dpg.add_table_column(
@@ -207,9 +212,10 @@ def populate_table(df: pd.DataFrame):
                 )
 
     if dpg.get_value("highlight"):
-        highlight_table()
+        unhighlight_table(df)
+        highlight_table(df)
     else:
-        unhighlight_table()
+        unhighlight_table(df)
 
 
 def deselect_all():
@@ -224,7 +230,7 @@ def deselect_all():
         row_select_callback(s, False)
 
 
-def create_table(path: Path):
+def setup_table(path: Path):
     keys = RESULT_KEYS
 
     if dpg.does_item_exist("results_table"):
@@ -249,10 +255,18 @@ def create_table(path: Path):
         .iloc[::-1]
     )
 
+    table_data: TableData = {
+        "original_df": df,
+        "df": df,
+        "path": path,
+        "selections": {},
+    }
+
     dpg.add_table(
-        user_data={"original_df": df, "df": df, "path": path, "selections": {}},
+        user_data=table_data,
         label="Results",
         tag="results_table",
+        no_saved_settings=True,
         header_row=True,
         hideable=False,
         resizable=True,
@@ -261,9 +275,9 @@ def create_table(path: Path):
         freeze_rows=1,
         scrollX=True,
         scrollY=True,
-        sortable=False,
+        sortable=True,
         callback=lambda s, a: sort_callback(s, a),
-        delay_search=True,
+        delay_search=False,
         policy=dpg.mvTable_SizingFixedFit,
         borders_outerH=True,
         borders_innerV=True,
@@ -275,60 +289,53 @@ def create_table(path: Path):
         width=-1,
     )
 
-    with dpg.mutex():
-        show_selected_rows(df)
-
+    # show_selected_rows(df)
+    cols_to_hide = list(set(RESULTS_JUNK) | set(RESULT_KEYS_ERR))
+    toggle_table_columns(cols_to_hide, False)
     enable_table_controls()
-
     dpg.configure_item("results_table", sortable=True)
 
 
 def csv_file_dialog_callback(_, app_data):
     path = Path(list(app_data["selections"].values())[0])
-    create_table(path)
+    setup_table(path)
 
 
-def toggle_highlight_table():
+def toggle_highlight_table(df):
     if dpg.get_value("highlight"):
-        highlight_table()
+        unhighlight_table(df)
+        highlight_table(df)
     else:
-        unhighlight_table()
+        unhighlight_table(df)
 
 
-def unhighlight_table():
-    table_data = dpg.get_item_user_data("results_table")
-    if table_data is None or not table_data:
-        return
-
-    df = select_rows(table_data["df"])
-
+def unhighlight_table(df):
+    df = select_rows(df)
     for i in range(df.shape[0]):
         for j in range(df.shape[1]):
             dpg.unhighlight_table_cell("results_table", i, j)
 
 
-@timeit
-def highlight_table():
-    table_data = dpg.get_item_user_data("results_table")
-    if table_data is None or not table_data:
-        return
+def highlight_table(df):
+    # table_rows = dpg.get_item_children("results_table", 1)
+    # if not table_rows:
+    #     return
 
-    df = select_rows(table_data["df"])
-
+    unhighlight_table(df)
+    df = select_rows(df)
     col_ids = [df.columns.get_loc(c) for c in RESULT_ELEMENTS if c in df]
     arr = df.iloc[:, col_ids].replace(["< LOD", ""], 0).to_numpy().astype(float)
     for row_i, row in enumerate(arr):
+        # if not dpg.is_item_visible(table_rows[row_i]):
+        #     continue
         t = np.nan_to_num(row / np.max(row), nan=0.0)
         t = np.log(t + 0.01)
         t = np.interp(t, (t.min(), t.max()), (0.0, 1.0))
         for val, column in zip(t, col_ids):
             sample = dpg.sample_colormap(dpg.mvPlotColormap_Jet, val)
             norm = [255.0, 255.0, 255.0, min(val * 100.0 + 20.0, 100.0)]
-            color = [sample[i] * norm[i] for i in range(len(sample))]
-            try:
-                dpg.highlight_table_cell("results_table", row_i, column, color)
-            except Exception:
-                logger.warn(f"Error highlighting table cell {row_i, column}")
+            color = [int(sample[i] * norm[i]) for i in range(len(sample))]
+            dpg.highlight_table_cell("results_table", row_i, column, color)
 
 
 @timeit
@@ -407,7 +414,13 @@ with dpg.theme() as global_theme:
         )
 
 with dpg.window(
-    label="xrfsplitter", tag="primary", autosize=True, menubar=False, user_data={}
+    label="xrfsplitter",
+    tag="primary",
+    autosize=False,
+    menubar=False,
+    user_data={},
+    delay_search=True,
+    no_background=True,
 ):
     with dpg.menu_bar(tag="menu_bar"):
         with dpg.menu(label="File"):
@@ -499,7 +512,9 @@ with dpg.window(
                 label="Highlight table",
                 tag="highlight",
                 default_value=False,
-                callback=toggle_highlight_table,
+                callback=lambda _s, _a: toggle_highlight_table(
+                    dpg.get_item_user_data("results_table").get("df").copy()  # type: ignore
+                ),
                 show=False,
                 enabled=(
                     not dpg.get_value("err col checkbox")
@@ -517,7 +532,7 @@ with dpg.window(
                     min_value=1,
                     min_clamped=True,
                     max_clamped=True,
-                    default_value=1,
+                    default_value=1788,
                     on_enter=True,
                     callback=lambda _s, _a: show_selected_rows(
                         dpg.get_item_user_data("results_table").get("df")  # type:ignore
@@ -529,7 +544,7 @@ with dpg.window(
                     width=100,
                     max_value=10000,
                     min_value=-1,
-                    default_value=-1,
+                    default_value=1872,
                     min_clamped=True,
                     max_clamped=True,
                     on_enter=True,
@@ -548,7 +563,7 @@ with dpg.window(
             user_data={},
             header_row=True,
             hideable=False,
-            resizable=True,
+            resizable=False,
             clipper=True,
             freeze_columns=1,
             freeze_rows=1,
@@ -567,8 +582,6 @@ with dpg.window(
             width=-1,
         ):
             dpg.add_table_column(label="File #")
-
-    # dpg.bind_font(default_font)
 
     pdz_file_dialog_callback(
         "",
