@@ -9,5 +9,5 @@ pip install pipenv
 pipenv shell
 pipenv install -d
 
-python -m nuitka ./app/main.py --onefile --lto=yes --pgo
+python -m nuitka ./app/main.py --onefile --lto=yes 
 ```

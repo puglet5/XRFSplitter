@@ -196,7 +196,7 @@ def populate_table(df: pd.DataFrame):
                 use_internal_label=False,
                 default_value=(arr[i, 0] in selections),
                 callback=row_select_callback,
-                id=selections.get(arr[i, 0], 0),
+                tag=selections.get(arr[i, 0], 0),
             )
             for j in range(1, arr.shape[1]):
                 dpg.add_selectable(
