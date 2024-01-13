@@ -1,4 +1,5 @@
 import csv
+import functools
 import logging
 import logging as log
 import os
@@ -10,12 +11,12 @@ from functools import partial, wraps
 from io import StringIO
 from pathlib import Path
 from struct import unpack
-from typing import Any, Callable, Literal, NotRequired, TypedDict
+from typing import Any, Callable, Literal, NotRequired, ParamSpec, TypedDict, TypeVar
+
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-
-import pandas as pd
 
 Result = TypedDict(
     "Result",
@@ -559,7 +560,7 @@ class XRFSpectrum:
 
 @dataclass
 class PDZFile:
-    pdz_file_path: str
+    pdz_file_path: Path
     name: str = field(default="", init=False)
     anode_element_z: bytes = field(default=b"", init=False)
     tube_name: str = field(default="", init=False)
@@ -729,14 +730,21 @@ class PDZFile:
                     self._append_spectrum()
 
 
-def timeit(func: Callable):
-    @wraps(func)
-    def timeit_wrapper(*args, **kwargs):
+T = TypeVar("T")
+P = ParamSpec("P")
+
+
+def log_exec_time(f: Callable[P, T]) -> Callable[P, T]:
+    @wraps(f)
+    def timeit_wrapper(*args, **kwargs) -> T:
         start_time = time.perf_counter()
-        result = func(*args, **kwargs)
+        result = f(*args, **kwargs)
         end_time = time.perf_counter()
         total_time = end_time - start_time
-        logger.debug(f"{func.__name__}: {total_time} s.")
+        logger.debug(f"{f.__name__}: {total_time} s.")
         return result
 
-    return timeit_wrapper
+    return timeit_wrapper  # type: ignore
+
+
+pd_sorter = functools.cmp_to_key(sorter)
