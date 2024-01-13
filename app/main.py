@@ -15,10 +15,18 @@ coloredlogs.install(level="DEBUG")
 
 dpg.create_context()
 dpg.create_viewport(title="xrf_splitter", width=1920, height=1080)
-# dpg.configure_app(docking=True, docking_space=False)
+dpg.configure_app(
+    # docking=True,
+    # docking_space=False,
+    # init_file="./dgp.ini"
+)
 
 TABLE = "results_table"
 WINDOW = "primary_window"
+
+
+def save_init():
+    dpg.save_init_file("./dpg.ini")
 
 
 @log_exec_time
@@ -58,8 +66,11 @@ def on_key_ctrl():
         dpg.stop_dearpygui()
     if dpg.is_key_pressed(dpg.mvKey_C):
         selected_co_clipboard()
-    if dpg.is_key_pressed(dpg.mvKey_A):
+    if not dpg.is_key_down(dpg.mvKey_Shift) and dpg.is_key_pressed(dpg.mvKey_A):
         select_all_rows()
+    if dpg.is_key_down(dpg.mvKey_Shift):
+        if dpg.is_key_pressed(dpg.mvKey_A):
+            deselect_all_rows()
     if dpg.is_key_down(dpg.mvKey_Alt):
         if dpg.is_key_pressed(dpg.mvKey_M):
             menubar_visible = dpg.get_item_configuration(WINDOW)["menubar"]
@@ -68,9 +79,6 @@ def on_key_ctrl():
 
 with dpg.handler_registry():
     dpg.add_key_down_handler(dpg.mvKey_Control, callback=on_key_ctrl)
-    dpg.add_key_press_handler(
-        dpg.mvKey_Escape, callback=lambda: deselect_all_rows(TABLE)
-    )
     dpg.add_key_press_handler(dpg.mvKey_Back, callback=lambda: deselect_all_rows(TABLE))
 
 
@@ -92,8 +100,8 @@ def toggle_lod(state: bool):
         else:
             filtered_df = current_df.replace("< LOD", "")
 
-        if filtered_df.equals(current_df):
-            return
+        # if filtered_df.equals(current_df):
+        #     return
 
         table_data["df"] = filtered_df
         dpg.set_item_user_data(TABLE, table_data)
@@ -102,17 +110,17 @@ def toggle_lod(state: bool):
 
 
 def enable_table_controls():
-    # dpg.enable_item("err col checkbox")
-    # dpg.show_item("err col checkbox")
-    dpg.enable_item("junk col checkbox")
-    dpg.show_item("junk col checkbox")
-    dpg.enable_item("highlight")
-    dpg.show_item("highlight")
-    dpg.enable_item("lod checkbox")
-    dpg.show_item("lod checkbox")
-    dpg.set_value("err col checkbox", False)
-    dpg.set_value("junk col checkbox", False)
-    dpg.set_value("lod checkbox", True)
+    # dpg.enable_item("err_col_checkbox")
+    # dpg.show_item("err_col_checkbox")
+    dpg.enable_item("junk_col_checkbox")
+    dpg.show_item("junk_col_checkbox")
+    dpg.enable_item("table_highlight_checkbox")
+    dpg.show_item("table_highlight_checkbox")
+    dpg.enable_item("lod_checkbox")
+    dpg.show_item("lod_checkbox")
+    dpg.set_value("err_col_checkbox", False)
+    dpg.set_value("junk_col_checkbox", False)
+    dpg.set_value("lod_checkbox", True)
 
 
 def toggle_table_columns(keys: list[str], state: bool, table=TABLE):
@@ -122,27 +130,26 @@ def toggle_table_columns(keys: list[str], state: bool, table=TABLE):
 
     table_data = table_data.copy()
 
-    with dpg.mutex():
-        original_df = table_data["original_df"]
-        current_df = table_data["df"]
-        if state:
-            columns_to_show = current_df.columns.tolist() + keys
-            original_columns = original_df.columns.tolist()
-            ordered_intersection = sorted(
-                set(original_columns) & set(columns_to_show),
-                key=original_columns.index,
-            )
-            filtered_df = original_df[ordered_intersection]
-        else:
-            filtered_df = current_df.drop(keys, axis=1)
+    original_df = table_data["original_df"]
+    current_df = table_data["df"]
+    if state:
+        columns_to_show = current_df.columns.tolist() + keys
+        original_columns = original_df.columns.tolist()
+        ordered_intersection = sorted(
+            set(original_columns) & set(columns_to_show),
+            key=original_columns.index,
+        )
+        filtered_df = original_df[ordered_intersection]
+    else:
+        filtered_df = current_df.drop(keys, axis=1)
 
-        if filtered_df.equals(current_df):
-            return
+    if filtered_df.equals(current_df):
+        return
 
-        table_data["df"] = filtered_df
-        dpg.set_item_user_data(table, table_data)
+    table_data["df"] = filtered_df
+    dpg.set_item_user_data(table, table_data)
 
-    show_selected_rows(filtered_df)
+    toggle_lod(dpg.get_value("lod_checkbox"))
 
 
 def select_rows(df: pd.DataFrame):
@@ -159,9 +166,8 @@ def select_rows(df: pd.DataFrame):
 
 
 def show_selected_rows(df: pd.DataFrame, table=TABLE):
-    with dpg.mutex():
-        filtered_df = select_rows(df)
-        populate_table(filtered_df, table)
+    filtered_df = select_rows(df)
+    populate_table(filtered_df, table)
 
 
 @log_exec_time
@@ -176,12 +182,16 @@ def select_all_rows(table=TABLE):
     if table_data is None or not table_data:
         return
 
-    for r in rows:
+    rows_n = len(rows)
+
+    for i, r in enumerate(rows):
+        dpg.set_value("table_progress", i / rows_n)
         if cells := dpg.get_item_children(r, 1):
             cell = cells[0]
             if not dpg.get_value(cell):
                 dpg.set_value(cell, True)
                 row_select_callback(cell, True, table=TABLE, td_up=table_data)
+    dpg.set_value("table_progress", 0)
 
 
 def row_select_callback(
@@ -224,32 +234,36 @@ def row_select_callback(
 
 @log_exec_time
 def populate_table(df: pd.DataFrame, table=TABLE):
-    try:
-        dpg.delete_item(table, children_only=True)
-    except Exception:
-        logger.warn(f"No table found: {table}")
+    with dpg.mutex():
+        try:
+            dpg.delete_item(table, children_only=True)
+        except Exception:
+            logger.warn(f"No table found: {table}")
 
-    arr = df.to_numpy()
-    cols = df.columns.to_numpy()
+        arr = df.to_numpy()
+        cols = df.columns.to_numpy()
 
-    table_data: TableData | None = dpg.get_item_user_data(table)
-    if not table_data:
-        return
+        table_data: TableData | None = dpg.get_item_user_data(table)
+        if not table_data:
+            return
 
-    if not table_data["selections"]:
-        selections = {}
+        if not table_data["selections"]:
+            selections = {}
 
-    selections = table_data["selections"].copy()
+        selections = table_data["selections"].copy()
 
-    for col in cols:
-        dpg.add_table_column(
-            label=col,
-            parent=table,
-            prefer_sort_ascending=False,
-            prefer_sort_descending=True,
-        )
+        for col in cols:
+            dpg.add_table_column(
+                label=col,
+                parent=table,
+                prefer_sort_ascending=False,
+                prefer_sort_descending=True,
+            )
 
-    for i in range(arr.shape[0]):
+    row_n = arr.shape[0]
+    for i in range(row_n):
+        dpg.set_value("table_progress", i / row_n)
+        dpg.lock_mutex()
         with dpg.table_row(use_internal_label=False, parent=table):
             dpg.add_selectable(
                 label=f"{arr[i,0]}",
@@ -266,12 +280,15 @@ def populate_table(df: pd.DataFrame, table=TABLE):
                     disable_popup_close=True,
                     use_internal_label=False,
                 )
+        dpg.unlock_mutex()
 
-    if dpg.get_value("highlight"):
-        unhighlight_table(df, table)
-        highlight_table(df, table)
-    else:
-        unhighlight_table(df, table)
+    dpg.set_value("table_progress", 0)
+
+    with dpg.mutex():
+        if dpg.get_value("table_highlight_checkbox"):
+            highlight_table(df, table)
+        else:
+            unhighlight_table(df, table)
 
 
 @log_exec_time
@@ -284,11 +301,16 @@ def deselect_all_rows(table=TABLE):
     if not selections:
         return
 
-    with dpg.mutex():
-        for cell in list(selections.values()):
-            if dpg.does_item_exist(cell):
-                dpg.set_value(cell, False)
-                row_select_callback(cell, False, table=TABLE, td_up=table_data)
+    cells = list(selections.values())
+    cells_n = len(cells)
+
+    for i, cell in enumerate(cells):
+        dpg.set_value("table_progress", i / cells_n)
+        if dpg.does_item_exist(cell):
+            dpg.set_value(cell, False)
+            row_select_callback(cell, False, table=TABLE, td_up=table_data)
+
+    dpg.set_value("table_progress", 0)
 
 
 def setup_table(csv_path: Path, table=TABLE):
@@ -366,7 +388,7 @@ def csv_file_dialog_callback(_, app_data: dict):
 
 
 def toggle_highlight_table(df: pd.DataFrame):
-    if dpg.get_value("highlight"):
+    if dpg.get_value("table_highlight_checkbox"):
         unhighlight_table(df, table=TABLE)
         highlight_table(df, table=TABLE)
     else:
@@ -375,9 +397,12 @@ def toggle_highlight_table(df: pd.DataFrame):
 
 def unhighlight_table(df: pd.DataFrame, table=TABLE):
     df = select_rows(df)
+    df_n = df.shape[0]
     for i in range(df.shape[0]):
+        dpg.set_value("table_progress", i / df_n)
         for j in range(df.shape[1]):
             dpg.unhighlight_table_cell(table, i, j)
+    dpg.set_value("table_progress", 0)
 
 
 def selected_co_clipboard(table=TABLE):
@@ -404,7 +429,9 @@ def highlight_table(df: pd.DataFrame, table=TABLE):
     df = select_rows(df)
     col_ids = [df.columns.get_loc(c) for c in RESULT_ELEMENTS if c in df]
     arr = df.iloc[:, col_ids].replace(["< LOD", ""], 0).to_numpy().astype(float)
+    arr_n = len(arr)
     for row_i, row in enumerate(arr):
+        dpg.set_value("table_progress", row_i / arr_n)
         # if not dpg.is_item_visible(table_rows[row_i]):
         #     continue
         t = np.nan_to_num(row / np.max(row), nan=0.0)
@@ -415,6 +442,7 @@ def highlight_table(df: pd.DataFrame, table=TABLE):
             norm = [255.0, 255.0, 255.0, min(val * 100.0 + 20.0, 100.0)]
             color = [int(sample[i] * norm[i]) for i in range(len(sample))]
             dpg.highlight_table_cell(TABLE, row_i, column, color)
+    dpg.set_value("table_progress", 0)
 
 
 def add_plot(path: Path):
@@ -434,6 +462,9 @@ def add_plot(path: Path):
         label=f"[1+2] {pdz.name}",
         parent="y_axis",
     )
+
+    dpg.fit_axis_data("x_axis")
+    dpg.fit_axis_data("y_axis")
 
 
 def pdz_file_dialog_callback(_, app_data: dict):
@@ -555,7 +586,7 @@ with dpg.window(
                     dpg.add_checkbox(
                         label="Show Err columns",
                         default_value=True,
-                        tag="err col checkbox",
+                        tag="err_col_checkbox",
                         callback=lambda _s, a: toggle_table_columns(RESULT_KEYS_ERR, a),
                         enabled=False,
                         show=False,
@@ -564,7 +595,7 @@ with dpg.window(
                     dpg.add_checkbox(
                         label="Show junk columns",
                         default_value=True,
-                        tag="junk col checkbox",
+                        tag="junk_col_checkbox",
                         callback=lambda _s, a: toggle_table_columns(RESULTS_JUNK, a),
                         enabled=False,
                         show=False,
@@ -573,7 +604,7 @@ with dpg.window(
                     dpg.add_checkbox(
                         label="Show '< LOD'",
                         default_value=True,
-                        tag="lod checkbox",
+                        tag="lod_checkbox",
                         callback=lambda _s, a: toggle_lod(a),
                         enabled=False,
                         show=False,
@@ -581,15 +612,15 @@ with dpg.window(
 
                     dpg.add_checkbox(
                         label="Highlight table",
-                        tag="highlight",
+                        tag="table_highlight_checkbox",
                         default_value=False,
                         callback=lambda _s, _a: toggle_highlight_table(
                             dpg.get_item_user_data(TABLE).get("df", None).copy()  # type: ignore
                         ),
                         show=False,
                         enabled=(
-                            not dpg.get_value("err col checkbox")
-                            and not dpg.get_value("junk col checkbox")
+                            not dpg.get_value("err_col_checkbox")
+                            and not dpg.get_value("junk_col_checkbox")
                         ),
                     )
 
@@ -651,7 +682,6 @@ with dpg.window(
                     dpg.add_plot_legend(location=9)
                     dpg.add_plot_axis(dpg.mvXAxis, label="Energy, kEv", tag="x_axis")
                     dpg.add_plot_axis(dpg.mvYAxis, label="Counts", tag="y_axis")
-
                 dpg.add_spacer(height=4)
                 dpg.add_separator()
                 dpg.add_spacer(height=4)
@@ -659,6 +689,7 @@ with dpg.window(
             with dpg.collapsing_header(
                 label="Results Table", default_open=True, tag="table_wrapper"
             ):
+                dpg.add_progress_bar(tag="table_progress", width=-1, height=10)
                 with dpg.table(
                     label="Results table",
                     tag=TABLE,
@@ -685,6 +716,7 @@ with dpg.window(
                 ):
                     dpg.add_table_column(label="File #")
 
+
 dpg.bind_theme(global_theme)
 dpg.setup_dearpygui()
 
@@ -701,7 +733,7 @@ csv_file_dialog_callback(
     },
 )
 highlight_table(dpg.get_item_user_data(TABLE).get("df", None).copy())  # type: ignore
-dpg.set_value("highlight", True)
+dpg.set_value("table_highlight_checkbox", True)
 
 dpg.show_viewport()
 dpg.set_primary_window(WINDOW, True)
