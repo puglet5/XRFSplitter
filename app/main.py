@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 coloredlogs.install(level="DEBUG")
 
 dpg.create_context()
-dpg.create_viewport(title="xrf_splitter", width=1920, height=1080)
+dpg.create_viewport(title="xrf_splitter", width=1920, height=1080, vsync=True)
 dpg.configure_app(
     # docking=True,
     # docking_space=False,
@@ -30,35 +30,22 @@ def save_init():
 
 
 @log_exec_time
-def sort_callback(_sender: int | str, sort_specs: None | list[list[int]]):
+def sort_callback(sender: int | str, sort_specs: None | list[list[int]]):
     if sort_specs is None:
         return
 
-    sort_col_id = sort_specs[0][0]
-    sort_col_label: str = dpg.get_item_configuration(sort_col_id)["label"]
-    table_data: TableData | None = dpg.get_item_user_data(TABLE)
+    sort_col_label: str = dpg.get_item_configuration(sort_specs[0][0])["label"]
 
-    if table_data is None or not table_data:
+    reverse = sort_specs[0][1] < 0
+
+    current = table_data.current
+
+    sorted = table_data.sort(sort_col_label, reverse)
+
+    if current.equals(sorted):
         return
 
-    table_data = table_data.copy()
-
-    unsorted_df = table_data["df"]
-
-    arr = unsorted_df[sort_col_label].tolist()
-    sorted_arr_ids = [
-        b[0]
-        for b in sorted(enumerate(arr), key=pd_sorter, reverse=sort_specs[0][1] < 0)
-    ]
-
-    if list(range(unsorted_df.shape[0])) == sorted_arr_ids:
-        return
-
-    df = unsorted_df.iloc[sorted_arr_ids, :]
-
-    table_data["df"] = df
-    dpg.set_item_user_data(TABLE, table_data)
-    show_selected_rows(df)
+    show_selected_rows(table_data.current)
 
 
 def on_key_ctrl():
@@ -66,10 +53,10 @@ def on_key_ctrl():
         dpg.stop_dearpygui()
     if dpg.is_key_pressed(dpg.mvKey_C):
         selected_co_clipboard()
-    if not dpg.is_key_down(dpg.mvKey_Shift) and dpg.is_key_pressed(dpg.mvKey_A):
-        select_all_rows()
     if dpg.is_key_down(dpg.mvKey_Shift):
         if dpg.is_key_pressed(dpg.mvKey_A):
+            select_all_rows()
+        if dpg.is_key_pressed(dpg.mvKey_D):
             deselect_all_rows()
     if dpg.is_key_down(dpg.mvKey_Alt):
         if dpg.is_key_pressed(dpg.mvKey_M):
@@ -77,36 +64,8 @@ def on_key_ctrl():
             dpg.configure_item(WINDOW, menubar=(not menubar_visible))
 
 
-with dpg.handler_registry():
-    dpg.add_key_down_handler(dpg.mvKey_Control, callback=on_key_ctrl)
-    dpg.add_key_press_handler(dpg.mvKey_Back, callback=lambda: deselect_all_rows(TABLE))
-
-
-def toggle_lod(state: bool):
-    table_data: TableData | None = dpg.get_item_user_data(TABLE)
-    if table_data is None:
-        return
-
-    table_data = table_data.copy()
-
-    with dpg.mutex():
-        original_df = table_data["original_df"]
-        current_df = table_data["df"]
-        if state:
-            filtered_df = current_df.copy()
-            filtered_df.update(
-                original_df, overwrite=False, filter_func=lambda x: x == ""
-            )
-        else:
-            filtered_df = current_df.replace("< LOD", "")
-
-        # if filtered_df.equals(current_df):
-        #     return
-
-        table_data["df"] = filtered_df
-        dpg.set_item_user_data(TABLE, table_data)
-
-    show_selected_rows(filtered_df)
+def toggle_lod():
+    show_selected_rows(table_data.toggle_lod(dpg.get_value("lod_checkbox")))
 
 
 def enable_table_controls():
@@ -123,108 +82,58 @@ def enable_table_controls():
     dpg.set_value("lod_checkbox", True)
 
 
-def toggle_table_columns(keys: list[str], state: bool, table=TABLE):
-    table_data: TableData | None = dpg.get_item_user_data(table)
-    if table_data is None:
-        return
-
-    table_data = table_data.copy()
-
-    original_df = table_data["original_df"]
-    current_df = table_data["df"]
-    if state:
-        columns_to_show = current_df.columns.tolist() + keys
-        original_columns = original_df.columns.tolist()
-        ordered_intersection = sorted(
-            set(original_columns) & set(columns_to_show),
-            key=original_columns.index,
-        )
-        filtered_df = original_df[ordered_intersection]
-    else:
-        filtered_df = current_df.drop(keys, axis=1)
-
-    if filtered_df.equals(current_df):
-        return
-
-    table_data["df"] = filtered_df
-    dpg.set_item_user_data(table, table_data)
-
-    toggle_lod(dpg.get_value("lod_checkbox"))
+def toggle_table_columns(
+    keys: list[str],
+    state: bool,
+):
+    table_data.toggle_columns(keys, state)
+    toggle_lod()
 
 
-def select_rows(df: pd.DataFrame):
+def select_rows(
+    df: pd.DataFrame,
+):
     row_range: tuple[int, int] = (dpg.get_value("from"), dpg.get_value("to"))
-
-    if row_range[1] == -1:
-        df = df.loc[pd.to_numeric(df["File #"]) >= row_range[0]]
-    else:
-        df = df.loc[
-            pd.to_numeric(df["File #"]).isin(range(row_range[0], row_range[1] + 1))
-        ]
-
-    return df
+    return table_data.select_rows_range(df, row_range)
 
 
-def show_selected_rows(df: pd.DataFrame, table=TABLE):
-    filtered_df = select_rows(df)
-    populate_table(filtered_df, table)
+def show_selected_rows(df: pd.DataFrame):
+    populate_table(select_rows(df))
 
 
 @log_exec_time
-def select_all_rows(table=TABLE):
-    children = dpg.get_item_children(table, 1)
-    if children and isinstance(children, list):
-        rows = children
-    else:
-        return
-
-    table_data: TableData | None = dpg.get_item_user_data(table)
-    if table_data is None or not table_data:
-        return
-
+def select_all_rows():
+    rows: list[int] = dpg.get_item_children(TABLE, 1)  # type:ignore
     rows_n = len(rows)
 
     for i, r in enumerate(rows):
         dpg.set_value("table_progress", i / rows_n)
         if cells := dpg.get_item_children(r, 1):
             cell = cells[0]
-            if not dpg.get_value(cell):
-                dpg.set_value(cell, True)
-                row_select_callback(cell, True, table=TABLE, td_up=table_data)
+            dpg.set_value(cell, True)
+            row_select_callback(cell, True)
+
     dpg.set_value("table_progress", 0)
 
 
-def row_select_callback(
-    cell: int | str, value: bool, table=TABLE, td_up: TableData | None = None
-):
+def row_select_callback(cell: int, value: bool):
+    global pdz_folder
+
     spectrum_label = dpg.get_item_label(cell)
     if spectrum_label is None:
         return
 
-    data: dict | None = dpg.get_item_user_data(WINDOW)
-    if data is None or not data:
-        return
+    selections = table_data.selections
 
-    folder: str = data.get("pdz_folder", None)
-    if folder is None or not folder:
-        return
-
-    if td_up is None:
-        table_data: TableData | None = dpg.get_item_user_data(table)
-        if table_data is None or not table_data:
-            return
-    else:
-        table_data = td_up
-
-    selections = table_data.get("selections", {})
-
-    files = [filename for filename in os.listdir(folder) if spectrum_label in filename]
+    files = [
+        filename for filename in os.listdir(pdz_folder) if spectrum_label in filename
+    ]
     file = files[0] if files else None
 
     if value:
         selections[spectrum_label] = cell
         if file is not None:
-            path = Path(f"{folder}/{file}")
+            path = Path(f"{pdz_folder}/{file}")
             add_plot(path)
     else:
         selections.pop(spectrum_label, None)
@@ -233,123 +142,76 @@ def row_select_callback(
 
 
 @log_exec_time
-def populate_table(df: pd.DataFrame, table=TABLE):
+def populate_table(df: pd.DataFrame):
     with dpg.mutex():
         try:
-            dpg.delete_item(table, children_only=True)
+            dpg.delete_item(TABLE, children_only=True)
         except Exception:
-            logger.warn(f"No table found: {table}")
+            logger.warn(f"No table found: {TABLE}")
 
         arr = df.to_numpy()
         cols = df.columns.to_numpy()
 
-        table_data: TableData | None = dpg.get_item_user_data(table)
-        if not table_data:
-            return
-
-        if not table_data["selections"]:
-            selections = {}
-
-        selections = table_data["selections"].copy()
-
         for col in cols:
             dpg.add_table_column(
                 label=col,
-                parent=table,
+                parent=TABLE,
                 prefer_sort_ascending=False,
                 prefer_sort_descending=True,
             )
 
+    selections = table_data.selections
+
     row_n = arr.shape[0]
     for i in range(row_n):
         dpg.set_value("table_progress", i / row_n)
-        dpg.lock_mutex()
-        with dpg.table_row(use_internal_label=False, parent=table):
+        with dpg.table_row(use_internal_label=False, parent=TABLE):
+            label = arr[i, 0]
             dpg.add_selectable(
-                label=f"{arr[i,0]}",
+                label=label,
                 span_columns=True,
-                disable_popup_close=True,
-                use_internal_label=False,
-                default_value=(arr[i, 0] in selections),
-                callback=lambda s, a: row_select_callback(s, a),
+                default_value=(label in selections),
+                callback=row_select_callback,
                 tag=selections.get(arr[i, 0], 0),
             )
             for j in range(1, arr.shape[1]):
                 dpg.add_selectable(
-                    label=f"{arr[i,j]}",
+                    label=arr[i, j],
                     disable_popup_close=True,
                     use_internal_label=False,
                 )
-        dpg.unlock_mutex()
 
     dpg.set_value("table_progress", 0)
 
-    with dpg.mutex():
-        if dpg.get_value("table_highlight_checkbox"):
-            highlight_table(df, table)
-        else:
-            unhighlight_table(df, table)
+    if dpg.get_value("table_highlight_checkbox"):
+        highlight_table(df)
 
 
 @log_exec_time
-def deselect_all_rows(table=TABLE):
-    table_data: TableData | None = dpg.get_item_user_data(table)
-    if table_data is None or not table_data:
-        return
-
-    selections: dict = table_data.get("selections", None)
-    if not selections:
-        return
-
-    cells = list(selections.values())
+def deselect_all_rows():
+    cells = list(table_data.selections.values())
     cells_n = len(cells)
 
     for i, cell in enumerate(cells):
         dpg.set_value("table_progress", i / cells_n)
         if dpg.does_item_exist(cell):
             dpg.set_value(cell, False)
-            row_select_callback(cell, False, table=TABLE, td_up=table_data)
+            row_select_callback(cell, False)
 
     dpg.set_value("table_progress", 0)
 
 
-def setup_table(csv_path: Path, table=TABLE):
-    keys = RESULT_KEYS
+def setup_table(csv_path: Path):
+    if dpg.does_item_exist(TABLE):
+        dpg.delete_item(TABLE)
 
-    if dpg.does_item_exist(table):
-        dpg.delete_item(table)
-
-    csv_data = construct_data(csv_path)
-    selected_data = select_data(
-        csv_data,
-        [0],
-        keys,
-    )
-    df = (
-        pd.read_csv(
-            data_to_csv(selected_data, keys),
-            dtype=str,
-            delimiter=",",
-            header="infer",
-            index_col=False,
-            skipinitialspace=False,
-        )
-        .fillna("")
-        .iloc[::-1]
-    )
-
-    table_data: TableData = {
-        "original_df": df,
-        "df": df,
-        "path": csv_path,
-        "selections": {},
-    }
+    global table_data
+    table_data = TableData(csv_path)
 
     dpg.add_table(
-        user_data=table_data,
         label="Results",
         parent="table_wrapper",
-        tag=table,
+        tag=TABLE,
         no_saved_settings=True,
         header_row=True,
         hideable=False,
@@ -376,7 +238,7 @@ def setup_table(csv_path: Path, table=TABLE):
     cols_to_hide = list(set(RESULTS_JUNK) | set(RESULT_KEYS_ERR))
     toggle_table_columns(cols_to_hide, False)
     enable_table_controls()
-    dpg.configure_item(table, sortable=True)
+    dpg.configure_item(TABLE, sortable=True)
 
 
 def csv_file_dialog_callback(_, app_data: dict):
@@ -389,51 +251,44 @@ def csv_file_dialog_callback(_, app_data: dict):
 
 def toggle_highlight_table(df: pd.DataFrame):
     if dpg.get_value("table_highlight_checkbox"):
-        unhighlight_table(df, table=TABLE)
-        highlight_table(df, table=TABLE)
+        unhighlight_table(
+            df,
+        )
+        highlight_table(
+            df,
+        )
     else:
-        unhighlight_table(df, table=TABLE)
+        unhighlight_table(
+            df,
+        )
 
 
-def unhighlight_table(df: pd.DataFrame, table=TABLE):
+def unhighlight_table(
+    df: pd.DataFrame,
+):
     df = select_rows(df)
     df_n = df.shape[0]
     for i in range(df.shape[0]):
         dpg.set_value("table_progress", i / df_n)
         for j in range(df.shape[1]):
-            dpg.unhighlight_table_cell(table, i, j)
+            dpg.unhighlight_table_cell(TABLE, i, j)
     dpg.set_value("table_progress", 0)
 
 
-def selected_co_clipboard(table=TABLE):
-    table_data: TableData | None = dpg.get_item_user_data(table)
-    if table_data is None or not table_data:
-        return
-
-    selections: dict = table_data.get("selections", None)
-    df = table_data.get("df", None)
-
-    if not selections:
-        return
-
-    selected_rows = df[df["File #"].isin(selections.keys())]
-    selected_rows.to_clipboard(excel=True, index=False)
+def selected_co_clipboard():
+    table_data.selected_to_clipboard()
 
 
-def highlight_table(df: pd.DataFrame, table=TABLE):
-    # table_rows = dpg.get_item_children(TABLE, 1)
-    # if not table_rows:
-    #     return
-
-    unhighlight_table(df, table)
+def highlight_table(
+    df: pd.DataFrame,
+):
+    unhighlight_table(df)
     df = select_rows(df)
     col_ids = [df.columns.get_loc(c) for c in RESULT_ELEMENTS if c in df]
     arr = df.iloc[:, col_ids].replace(["< LOD", ""], 0).to_numpy().astype(float)
     arr_n = len(arr)
     for row_i, row in enumerate(arr):
         dpg.set_value("table_progress", row_i / arr_n)
-        # if not dpg.is_item_visible(table_rows[row_i]):
-        #     continue
         t = np.nan_to_num(row / np.max(row), nan=0.0)
         t = np.log(t + 0.01)
         t = np.interp(t, (t.min(), t.max()), (0.0, 1.0))
@@ -467,13 +322,13 @@ def add_plot(path: Path):
     dpg.fit_axis_data("y_axis")
 
 
-def pdz_file_dialog_callback(_, app_data: dict):
-    data: dict | None = dpg.get_item_user_data(WINDOW)
-    if data is None:
-        data = {}
-    pdz_folder = app_data.get("file_path_name", None)
-    dpg.set_item_user_data(WINDOW, {**data, **{"pdz_folder": pdz_folder}})
+def pdz_file_dialog_callback(_, app_data: dict[str, str]):
+    global pdz_folder
+    pdz_folder = app_data.get("file_path_name", "")
 
+
+with dpg.handler_registry():
+    dpg.add_key_down_handler(dpg.mvKey_Control, callback=on_key_ctrl)
 
 with dpg.file_dialog(
     directory_selector=True,
@@ -605,7 +460,7 @@ with dpg.window(
                         label="Show '< LOD'",
                         default_value=True,
                         tag="lod_checkbox",
-                        callback=lambda _s, a: toggle_lod(a),
+                        callback=lambda _s, a: toggle_lod(),
                         enabled=False,
                         show=False,
                     )
@@ -615,7 +470,7 @@ with dpg.window(
                         tag="table_highlight_checkbox",
                         default_value=False,
                         callback=lambda _s, _a: toggle_highlight_table(
-                            dpg.get_item_user_data(TABLE).get("df", None).copy()  # type: ignore
+                            table_data.current
                         ),
                         show=False,
                         enabled=(
@@ -634,13 +489,9 @@ with dpg.window(
                             min_value=1,
                             min_clamped=True,
                             max_clamped=True,
-                            default_value=1772,
+                            default_value=1,
                             on_enter=True,
-                            callback=lambda _s, _a: show_selected_rows(
-                                dpg.get_item_user_data(TABLE).get(  # type:ignore
-                                    "df", None
-                                )
-                            ),
+                            callback=lambda _s, _a: toggle_lod(),
                         )
                         dpg.add_text("to")
                         dpg.add_input_int(
@@ -648,15 +499,11 @@ with dpg.window(
                             width=100,
                             max_value=10000,
                             min_value=-1,
-                            default_value=1872,
+                            default_value=-1,
                             min_clamped=True,
                             max_clamped=True,
                             on_enter=True,
-                            callback=lambda s, _a: show_selected_rows(
-                                dpg.get_item_user_data(TABLE).get(  # type:ignore
-                                    "df", None
-                                )
-                            ),
+                            callback=lambda s, _a: toggle_lod(),
                         )
                         dpg.add_text(
                             "(?)", tag="range_tooltip", color=(200, 200, 200, 100)
@@ -666,8 +513,13 @@ with dpg.window(
                             dpg.add_text("-1 indicates no upper limit")
 
                     dpg.add_button(
+                        label="Select all",
+                        callback=lambda _s, _a: select_all_rows(),
+                    )
+
+                    dpg.add_button(
                         label="Deselect all",
-                        callback=lambda _s, _a: deselect_all_rows(TABLE),
+                        callback=lambda _s, _a: deselect_all_rows(),
                     )
 
         with dpg.child_window(border=False, width=-1, tag="data"):
@@ -732,7 +584,7 @@ csv_file_dialog_callback(
         }
     },
 )
-highlight_table(dpg.get_item_user_data(TABLE).get("df", None).copy())  # type: ignore
+highlight_table(table_data.current)  # type: ignore
 dpg.set_value("table_highlight_checkbox", True)
 
 dpg.show_viewport()

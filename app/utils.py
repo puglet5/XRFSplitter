@@ -404,48 +404,6 @@ RESULTS_JUNK = [
 FMTS = Literal["B", "h", "i", "I", "f", "s", "10", "5"]
 
 
-class TableData(TypedDict):
-    df: pd.DataFrame
-    original_df: pd.DataFrame
-    selections: dict
-    path: str | Path
-
-
-def sorter(x, y):
-    strx: str = str(x[1]).strip()
-    stry: str = str(y[1]).strip()
-
-    try:
-        x = float(strx)
-        y = float(stry)
-
-        if x < y:
-            return -1
-        elif x > y:
-            return 1
-        else:
-            return 0
-
-    except ValueError:
-        x = strx
-        y = stry
-
-    if x == "" and y == "< LOD":
-        return -1
-    if y == "" and x == "< LOD":
-        return 1
-    if x == "" or x == "< LOD" and y != x:
-        return -1
-    if y == "" or y == "< LOD" and x != y:
-        return 1
-    if x < y:
-        return -1
-    elif x > y:
-        return 1
-    else:
-        return 0
-
-
 def construct_data(filepath: Path):
     with open(filepath, "r") as f:
         lines_arr = list(
@@ -747,4 +705,170 @@ def log_exec_time(f: Callable[P, T]) -> Callable[P, T]:
     return timeit_wrapper  # type: ignore
 
 
-pd_sorter = functools.cmp_to_key(sorter)
+class SpectraData(TypedDict):
+    ...
+
+
+@dataclass
+class TableData:
+    path: str | Path
+    original: pd.DataFrame = field(init=False)
+    current: pd.DataFrame = field(init=False)
+    selections: dict[str, int] = field(init=False)
+
+    def __post_init__(self):
+        self.selections = {}
+        self.selected_rows = []
+        self.selected_columns = list(set(RESULTS_JUNK) | set(RESULT_KEYS_ERR))
+        raw_csv = self._raw_to_csv(self._results_to_array(self._construct()))
+        self.original = pd.read_csv(
+            raw_csv,
+            dtype=str,
+            delimiter=",",
+            header=0,
+            index_col=False,
+            na_filter=False,
+        )[::-1]
+
+        self.current = self.original.copy()
+
+    def _sorter(self, x, y):
+        strx = str(x[1])
+        stry = str(y[1])
+
+        try:
+            x = float(strx)
+            y = float(stry)
+
+            if x < y:
+                return -1
+            elif x > y:
+                return 1
+            else:
+                return 0
+
+        except ValueError:
+            x = strx
+            y = stry
+
+        if x == "" and y == "< LOD":
+            return -1
+        if y == "" and x == "< LOD":
+            return 1
+        if x == "" or x == "< LOD" and y != x:
+            return -1
+        if y == "" or y == "< LOD" and x != y:
+            return 1
+        if x < y:
+            return -1
+        elif x > y:
+            return 1
+        else:
+            return 0
+
+    def _construct(self):
+        with open(self.path, "r") as f:
+            lines_arr = list(
+                csv.reader(
+                    f, skipinitialspace=True, delimiter=",", quoting=csv.QUOTE_NONE
+                )
+            )
+
+        header_ids: list[int] = []
+        for i, line in enumerate(lines_arr):
+            if line[0] == "File #":
+                header_ids.append(i)
+
+        els_per_header: list[int] = [
+            header_ids[n] - header_ids[n - 1] for n in range(1, len(header_ids))
+        ] + [len(lines_arr) - header_ids[-1]]
+
+        lines_same_header: list[list[list[str]]] = []
+        for i, e in zip(header_ids, els_per_header):
+            lines_same_header.append(lines_arr[i : i + e])
+
+        results_data: Results = {}
+        for lines in lines_same_header:
+            for l in lines[1:]:
+                results_data[l[0]] = dict(zip(lines[0], l))  # type: ignore
+
+        return results_data
+
+    def _results_to_array(self, data: Results):
+        max_data_number = max([int(s) for s in data.keys()])
+
+        data_selected = [
+            [data.get(str(i), {}).get(k) for k in RESULT_KEYS]
+            for i in range(0, max_data_number + 1)
+        ]
+
+        data_strings: list[list[str]] = [
+            [i or "" for i in res] for res in data_selected if any(res)
+        ]
+
+        return data_strings
+
+    def _raw_to_csv(self, data):
+        data.insert(0, RESULT_KEYS)
+        sio = StringIO()
+        csv_writer = csv.writer(sio, quotechar="'")
+        csv_writer.writerows(data)
+        sio.seek(0)
+        return sio
+
+    def toggle_lod(self, state: bool):
+        if state:
+            self.current.update(
+                self.original, overwrite=False, filter_func=lambda x: x == ""
+            )
+        else:
+            self.current = self.current.replace("< LOD", "")
+
+        return self.current
+
+    def toggle_columns(self, keys: list[str], state: bool):
+        if state:
+            columns_to_show = self.current.columns.tolist() + keys
+            original_columns = self.original.columns.tolist()
+            ordered_intersection = sorted(
+                set(original_columns) & set(columns_to_show),
+                key=original_columns.index,
+            )
+            self.current = self.original[ordered_intersection].copy()
+        else:
+            self.current = self.current.drop(keys, axis=1)
+
+        return self.current
+
+    def select_rows_range(self, df: pd.DataFrame, row_range: tuple[int, int]):
+        if row_range[1] == -1:
+            filtered = df.loc[pd.to_numeric(df["File #"]) >= row_range[0]]
+        else:
+            filtered = df.loc[
+                pd.to_numeric(df["File #"]).isin(range(row_range[0], row_range[1] + 1))
+            ]
+
+        return filtered
+
+    def select_rows_list(self, df: pd.DataFrame, row_list: list[str]):
+        filtered = df.loc[df["File #"].isin(row_list)].copy()
+        return filtered
+
+    def sort(self, column: str, reverse: bool):
+        arr = self.current[column].tolist()
+        sorted_arr_ids = [
+            b[0]
+            for b in sorted(
+                enumerate(arr), key=functools.cmp_to_key(self._sorter), reverse=reverse
+            )
+        ]
+
+        self.current = self.current.iloc[sorted_arr_ids, :]
+
+        return self.current
+
+    def selected_to_clipboard(self):
+        selected_rows = self.current[
+            self.current["File #"].isin(self.selections)
+        ]
+        selected_rows.to_clipboard(excel=True, index=False)
