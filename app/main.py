@@ -106,7 +106,7 @@ def row_select_callback(cell: int, value: bool):
     files = [
         filename
         for filename in os.listdir(plot_data.pdz_folder)
-        if spectrum_label in filename
+        if f"0{spectrum_label}" in filename.split("-")[0]
     ]
     file = files[0] if files else None
 
@@ -195,11 +195,13 @@ def deselect_all_rows():
 
 def remove_pca_plot():
     dpg.delete_item("pca_y_axis", children_only=True)
+    dpg.delete_item("pca_plots", children_only=True, slot=0)
 
 
 def update_pca_plot():
     plot_data.generate_pca_data()
     dpg.delete_item("pca_y_axis", children_only=True)
+    dpg.delete_item("pca_plots", children_only=True, slot=0)
 
     for i in plot_data.pca_shapes:
         for j in i:
@@ -221,14 +223,25 @@ def update_pca_plot():
         parent="pca_y_axis",
     )
 
+    for x, y, label in zip(x, y, plot_data.pdz_data.keys()):
+        dpg.add_plot_annotation(
+            label=label,
+            clamped=False,
+            default_value=(x, y),
+            offset=(-1, 1),
+            color=[255, 255, 255, 128],
+            parent="pca_plots",
+        )
+    print(dpg.get_item_children("pca_plots"))
+
     variance = plot_data.pca_info.explained_variance_ratio_
     sum = variance.sum()
 
     dpg.configure_item("pca_x_axis", label=f"PC2 ({variance[0]/sum*100:,.2f}%)")
     dpg.configure_item("pca_y_axis", label=f"PC2 ({variance[1]/sum*100:,.2f}%)")
 
-    dpg.fit_axis_data("pca_x_axis")
-    dpg.fit_axis_data("pca_y_axis")
+    # dpg.fit_axis_data("pca_x_axis")
+    # dpg.fit_axis_data("pca_y_axis")
 
 
 def setup_table(csv_path: Path):
@@ -593,7 +606,7 @@ with dpg.window(
                             tag="pdz_plots",
                             crosshairs=True,
                             anti_aliased=True,
-                            height=300,
+                            height=400,
                             width=-1,
                         ):
                             dpg.add_plot_legend(location=9)
@@ -601,13 +614,12 @@ with dpg.window(
                                 dpg.mvXAxis, label="Energy, kEv", tag="x_axis"
                             )
                             dpg.add_plot_axis(dpg.mvYAxis, label="Counts", tag="y_axis")
-
                     with dpg.tab(label="PCA"):
                         with dpg.plot(
                             tag="pca_plots",
                             crosshairs=True,
                             anti_aliased=True,
-                            height=300,
+                            height=400,
                             width=-1,
                             equal_aspects=True,
                         ):

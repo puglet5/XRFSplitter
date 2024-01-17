@@ -768,7 +768,7 @@ class PlotData:
 
         self.pca_info = pca
 
-        xx, yy = np.mgrid[xmin:xmax:200j, ymin:ymax:200j]
+        xx, yy = np.mgrid[xmin:xmax:100j, ymin:ymax:100j]
         positions = np.vstack([xx.ravel(), yy.ravel()])
         kernel = st.gaussian_kde(pca_data.T)
         f = np.reshape(kernel(positions).T, xx.shape)
