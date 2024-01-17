@@ -341,9 +341,7 @@ def collapsible_clicked_callback(s, a):
     plots_visible: bool = dpg.get_item_state("plots_wrapper")[
         "clicked"
     ] != dpg.is_item_visible("plots_tabs")
-    table_visible: bool = dpg.get_item_state("table_wrapper")[
-        "clicked"
-    ] != dpg.is_item_visible(TABLE)
+    table_visible = dpg.is_item_visible(TABLE)
 
     vp_height = dpg.get_viewport_height()
 
