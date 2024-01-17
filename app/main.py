@@ -91,8 +91,9 @@ def select_all_rows():
         yield (i / rows_n)
         if cells := dpg.get_item_children(r, 1):
             cell = cells[0]
-            dpg.set_value(cell, True)
-            row_select_callback(cell, True)
+            if not dpg.get_value(cell):
+                dpg.set_value(cell, True)
+                row_select_callback(cell, True)
 
 
 def row_select_callback(cell: int, value: bool):
@@ -103,19 +104,27 @@ def row_select_callback(cell: int, value: bool):
     selections = table_data.selections
 
     files = [
-        filename for filename in os.listdir(pdz_folder) if spectrum_label in filename
+        filename
+        for filename in os.listdir(plot_data.pdz_folder)
+        if spectrum_label in filename
     ]
     file = files[0] if files else None
 
     if value:
         selections[spectrum_label] = int(cell)
         if file is not None:
-            path = Path(f"{pdz_folder}/{file}")
-            add_plot(path)
+            path = Path(f"{plot_data.pdz_folder}/{file}")
+            add_pdz_plot(path, spectrum_label)
+            if len(plot_data.pdz_data) > 3:
+                update_pca_plot()
     else:
         selections.pop(spectrum_label, None)
         if file is not None:
-            dpg.delete_item(file)
+            remove_pdz_plot(spectrum_label)
+            if len(plot_data.pdz_data) > 3:
+                update_pca_plot()
+            else:
+                remove_pca_plot()
 
 
 @log_exec_time
@@ -182,6 +191,44 @@ def deselect_all_rows():
         if dpg.does_item_exist(cell):
             dpg.set_value(cell, False)
             row_select_callback(cell, False)
+
+
+def remove_pca_plot():
+    dpg.delete_item("pca_y_axis", children_only=True)
+
+
+def update_pca_plot():
+    plot_data.generate_pca_data()
+    dpg.delete_item("pca_y_axis", children_only=True)
+
+    for i in plot_data.pca_shapes:
+        for j in i:
+            x = j.T[0].tolist()
+            y = j.T[1].tolist()
+            if x and y:
+                dpg.add_area_series(
+                    x,
+                    y,
+                    parent="pca_y_axis",
+                    fill=(30, 120, 200, 10),
+                )
+
+    x = plot_data.pca_data.T[0].tolist()
+    y = plot_data.pca_data.T[1].tolist()
+    dpg.add_scatter_series(
+        x,
+        y,
+        parent="pca_y_axis",
+    )
+
+    variance = plot_data.pca_info.explained_variance_ratio_
+    sum = variance.sum()
+
+    dpg.configure_item("pca_x_axis", label=f"PC2 ({variance[0]/sum*100:,.2f}%)")
+    dpg.configure_item("pca_y_axis", label=f"PC2 ({variance[1]/sum*100:,.2f}%)")
+
+    dpg.fit_axis_data("pca_x_axis")
+    dpg.fit_axis_data("pca_y_axis")
 
 
 def setup_table(csv_path: Path):
@@ -269,20 +316,24 @@ def highlight_table():
             dpg.highlight_table_cell(TABLE, row_i, column, color)
 
 
-def add_plot(path: Path):
+def add_pdz_plot(path: Path, label: str):
+    if dpg.does_item_exist(f"{label}_plot"):
+        return
+
     pdz = PDZFile(path)
+    plot_data.pdz_data[label] = pdz
     spectra_sum = [
         pdz.spectra[1].counts[i] + pdz.spectra[2].counts[i]
         for i, _ in enumerate(pdz.spectra[1].counts)
     ]
 
-    if dpg.does_item_exist(pdz.name):
-        return
+    x = pdz.spectra[2].energies
+    y = spectra_sum
 
     dpg.add_line_series(
-        pdz.spectra[2].energies,
-        spectra_sum,
-        tag=pdz.name,
+        x,
+        y,
+        tag=f"{label}_plot",
         label=f"[1+2] {pdz.name}",
         parent="y_axis",
     )
@@ -291,9 +342,14 @@ def add_plot(path: Path):
     dpg.fit_axis_data("y_axis")
 
 
+def remove_pdz_plot(label: str):
+    plot_data.pdz_data.pop(label, None)
+    dpg.delete_item(f"{label}_plot")
+
+
 def pdz_file_dialog_callback(_, app_data: dict[str, str]):
-    global pdz_folder
-    pdz_folder = app_data.get("file_path_name", "")
+    global plot_data
+    plot_data = PlotData(app_data.get("file_path_name", ""))
 
 
 def setup_dev():
@@ -358,6 +414,25 @@ with dpg.theme() as global_theme:
             (0, 119, 200, 60),
             category=dpg.mvThemeCat_Core,
         )
+
+with dpg.theme() as pca_theme:
+    with dpg.theme_component(dpg.mvAreaSeries):
+        dpg.add_theme_color(
+            dpg.mvPlotCol_Line, (255, 255, 255, 100), category=dpg.mvThemeCat_Plots
+        )
+
+    with dpg.theme_component(dpg.mvScatterSeries):
+        dpg.add_theme_color(
+            dpg.mvPlotCol_MarkerFill,
+            (255, 255, 255, 255),
+            category=dpg.mvThemeCat_Plots,
+        )
+        dpg.add_theme_color(
+            dpg.mvPlotCol_MarkerOutline,
+            (255, 255, 255, 255),
+            category=dpg.mvThemeCat_Plots,
+        )
+
 
 with dpg.window(
     label="xrfsplitter",
@@ -465,10 +540,6 @@ with dpg.window(
                         default_value=True,
                         callback=lambda _s, _a: toggle_highlight_table(),
                         show=False,
-                        enabled=(
-                            not dpg.get_value("err_col_checkbox")
-                            and not dpg.get_value("junk_col_checkbox")
-                        ),
                     )
 
                     dpg.add_text("File # range:")
@@ -481,7 +552,7 @@ with dpg.window(
                             min_value=1,
                             min_clamped=True,
                             max_clamped=True,
-                            default_value=1,
+                            default_value=1800,
                             on_enter=True,
                             callback=lambda _s, _a: populate_table(),
                         )
@@ -491,7 +562,7 @@ with dpg.window(
                             width=100,
                             max_value=10000,
                             min_value=-1,
-                            default_value=-1,
+                            default_value=1820,
                             min_clamped=True,
                             max_clamped=True,
                             on_enter=True,
@@ -515,17 +586,39 @@ with dpg.window(
                     )
 
         with dpg.child_window(border=False, width=-1, tag="data"):
-            with dpg.collapsing_header(label="PDZ Plots", default_open=False):
-                with dpg.plot(
-                    tag="plots",
-                    crosshairs=True,
-                    anti_aliased=True,
-                    height=300,
-                    width=-1,
-                ):
-                    dpg.add_plot_legend(location=9)
-                    dpg.add_plot_axis(dpg.mvXAxis, label="Energy, kEv", tag="x_axis")
-                    dpg.add_plot_axis(dpg.mvYAxis, label="Counts", tag="y_axis")
+            with dpg.collapsing_header(label="Plots", default_open=False):
+                with dpg.tab_bar():
+                    with dpg.tab(label="PDZ"):
+                        with dpg.plot(
+                            tag="pdz_plots",
+                            crosshairs=True,
+                            anti_aliased=True,
+                            height=300,
+                            width=-1,
+                        ):
+                            dpg.add_plot_legend(location=9)
+                            dpg.add_plot_axis(
+                                dpg.mvXAxis, label="Energy, kEv", tag="x_axis"
+                            )
+                            dpg.add_plot_axis(dpg.mvYAxis, label="Counts", tag="y_axis")
+
+                    with dpg.tab(label="PCA"):
+                        with dpg.plot(
+                            tag="pca_plots",
+                            crosshairs=True,
+                            anti_aliased=True,
+                            height=300,
+                            width=-1,
+                            equal_aspects=True,
+                        ):
+                            dpg.add_plot_legend(location=9)
+                            dpg.add_plot_axis(
+                                dpg.mvXAxis, label="PC2", tag="pca_x_axis"
+                            )
+                            dpg.add_plot_axis(
+                                dpg.mvYAxis, label="PC1", tag="pca_y_axis"
+                            )
+
                 dpg.add_spacer(height=4)
                 dpg.add_separator()
                 dpg.add_spacer(height=4)
@@ -561,6 +654,7 @@ with dpg.window(
                     dpg.add_table_column(label=ID_COL)
 
 dpg.bind_theme(global_theme)
+dpg.bind_item_theme("pca_plots", pca_theme)
 dpg.set_frame_callback(3, setup_dev)
 dpg.setup_dearpygui()
 dpg.show_viewport()

@@ -14,7 +14,16 @@ from struct import unpack
 from typing import Any, Callable, Literal, NotRequired, ParamSpec, TypedDict, TypeVar
 
 import dearpygui.dearpygui as dpg
+import matplotlib
+import numpy as np
+import numpy.typing as npt
 import pandas as pd
+import scipy.stats as st
+from matplotlib import pyplot as plt
+
+matplotlib.use("agg")
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler, minmax_scale
 
 logger = logging.getLogger(__name__)
 
@@ -722,8 +731,53 @@ def progress_bar(f):
     return _wrapper
 
 
-class SpectraData(TypedDict):
-    ...
+@dataclass
+class PlotData:
+    pdz_folder: str | Path
+    pdz_data: dict[str, PDZFile] = field(init=False)
+    pca_data: npt.NDArray[np.float_] = field(init=False)
+    pca_shapes: list[list[npt.NDArray[np.float_]]] = field(init=False)
+    pca_info: PCA = field(init=False)
+
+    def __post_init__(self):
+        self.pdz_data = {}
+
+    def generate_pca_data(self):
+        y_data = []
+        for file in list(self.pdz_data.values()):
+            spectra_sum = np.array(
+                [
+                    file.spectra[1].counts[i] + file.spectra[2].counts[i]
+                    for i, _ in enumerate(file.spectra[1].counts)
+                    if i < 800
+                ]
+            )
+
+            y_data.append(spectra_sum)
+
+        data = np.array(y_data, dtype=float)
+        data = minmax_scale(data, feature_range=(0, 1), axis=1)
+        scaler = StandardScaler()
+        # data =scaler.fit_transform(data)
+        pca = PCA(n_components=2)
+        pca_data = pca.fit_transform(data)
+        x = pca_data.T[0]
+        y = pca_data.T[1]
+        xmin, xmax = x.min() - 1, x.max() + 1
+        ymin, ymax = y.min() - 1, y.max() + 1
+
+        self.pca_info = pca
+
+        xx, yy = np.mgrid[xmin:xmax:200j, ymin:ymax:200j]
+        positions = np.vstack([xx.ravel(), yy.ravel()])
+        kernel = st.gaussian_kde(pca_data.T)
+        f = np.reshape(kernel(positions).T, xx.shape)
+
+        plt.ioff()
+        allsegs = plt.contour(xx, yy, f).allsegs
+
+        self.pca_shapes = allsegs
+        self.pca_data = pca_data
 
 
 @dataclass
@@ -892,6 +946,21 @@ class TableData:
         self.current = self.current.iloc[sorted_arr_ids, :]
 
         return self.current
+
+    def append_errs(self):
+        new_df = pd.DataFrame()
+
+        err_df = self.original[RESULT_KEYS_ERR].replace("", "0.0000")
+
+        for i, col in enumerate(self.current[RESULT_ELEMENTS].columns.tolist()):
+            new_df[col] = (
+                self.current[RESULT_ELEMENTS]
+                .iloc[:, i]
+                .str.cat(err_df.iloc[:, i], sep="±")
+            )
+            new_df = new_df.replace(["±", "±0.0000"], "")
+
+        return new_df
 
     def selected_to_clipboard(self):
         selected_rows = self.current[self.current[ID_COL].isin(self.selections)]
