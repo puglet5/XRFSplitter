@@ -16,6 +16,7 @@ coloredlogs.install(level="DEBUG")
 dpg.create_context()
 dpg.create_viewport(title="xrf_splitter", width=1920, height=1080, vsync=True)
 dpg.configure_app(
+    wait_for_input=False
     # docking=True,
     # docking_space=False,
     # init_file="./dgp.ini"
@@ -43,16 +44,18 @@ def sort_callback(sender: int | str, sort_specs: None | list[list[int]]):
     sorted = table_data.sort(sort_col_label, reverse)
 
     if current.equals(sorted):
+        logger.warning("Table already sorted")
         return
 
-    show_selected_rows(table_data.current)
+    populate_table()
 
 
 def on_key_ctrl():
     if dpg.is_key_pressed(dpg.mvKey_Q):
         dpg.stop_dearpygui()
     if dpg.is_key_pressed(dpg.mvKey_C):
-        selected_co_clipboard()
+        if table_data.selections:
+            table_data.selected_to_clipboard()
     if dpg.is_key_down(dpg.mvKey_Shift):
         if dpg.is_key_pressed(dpg.mvKey_A):
             select_all_rows()
@@ -64,13 +67,9 @@ def on_key_ctrl():
             dpg.configure_item(WINDOW, menubar=(not menubar_visible))
 
 
-def toggle_lod():
-    show_selected_rows(table_data.toggle_lod(dpg.get_value("lod_checkbox")))
-
-
 def enable_table_controls():
-    # dpg.enable_item("err_col_checkbox")
-    # dpg.show_item("err_col_checkbox")
+    dpg.enable_item("err_col_checkbox")
+    dpg.show_item("err_col_checkbox")
     dpg.enable_item("junk_col_checkbox")
     dpg.show_item("junk_col_checkbox")
     dpg.enable_item("table_highlight_checkbox")
@@ -82,43 +81,21 @@ def enable_table_controls():
     dpg.set_value("lod_checkbox", True)
 
 
-def toggle_table_columns(
-    keys: list[str],
-    state: bool,
-):
-    table_data.toggle_columns(keys, state)
-    toggle_lod()
-
-
-def select_rows(
-    df: pd.DataFrame,
-):
-    row_range: tuple[int, int] = (dpg.get_value("from"), dpg.get_value("to"))
-    return table_data.select_rows_range(df, row_range)
-
-
-def show_selected_rows(df: pd.DataFrame):
-    populate_table(select_rows(df))
-
-
 @log_exec_time
+@progress_bar
 def select_all_rows():
     rows: list[int] = dpg.get_item_children(TABLE, 1)  # type:ignore
     rows_n = len(rows)
 
     for i, r in enumerate(rows):
-        dpg.set_value("table_progress", i / rows_n)
+        yield (i / rows_n)
         if cells := dpg.get_item_children(r, 1):
             cell = cells[0]
             dpg.set_value(cell, True)
             row_select_callback(cell, True)
 
-    dpg.set_value("table_progress", 0)
-
 
 def row_select_callback(cell: int, value: bool):
-    global pdz_folder
-
     spectrum_label = dpg.get_item_label(cell)
     if spectrum_label is None:
         return
@@ -131,7 +108,7 @@ def row_select_callback(cell: int, value: bool):
     file = files[0] if files else None
 
     if value:
-        selections[spectrum_label] = cell
+        selections[spectrum_label] = int(cell)
         if file is not None:
             path = Path(f"{pdz_folder}/{file}")
             add_plot(path)
@@ -142,8 +119,17 @@ def row_select_callback(cell: int, value: bool):
 
 
 @log_exec_time
-def populate_table(df: pd.DataFrame):
+@progress_bar
+def populate_table():
+    table_data.toggle_columns(RESULTS_JUNK, dpg.get_value("junk_col_checkbox"))
+    table_data.toggle_columns(RESULT_KEYS_ERR, dpg.get_value("err_col_checkbox"))
+    table_data.selected_rows_range = (dpg.get_value("from"), dpg.get_value("to"))
+    table_data.toggle_lod(dpg.get_value("lod_checkbox"))
+    df = table_data.select_rows_range()
+
     with dpg.mutex():
+        if dpg.get_value("table_highlight_checkbox"):
+            unhighlight_table()
         try:
             dpg.delete_item(TABLE, children_only=True)
         except Exception:
@@ -164,7 +150,7 @@ def populate_table(df: pd.DataFrame):
 
     row_n = arr.shape[0]
     for i in range(row_n):
-        dpg.set_value("table_progress", i / row_n)
+        yield (i / row_n)
         with dpg.table_row(use_internal_label=False, parent=TABLE):
             label = arr[i, 0]
             dpg.add_selectable(
@@ -181,24 +167,21 @@ def populate_table(df: pd.DataFrame):
                     use_internal_label=False,
                 )
 
-    dpg.set_value("table_progress", 0)
-
     if dpg.get_value("table_highlight_checkbox"):
-        highlight_table(df)
+        highlight_table()
 
 
 @log_exec_time
+@progress_bar
 def deselect_all_rows():
     cells = list(table_data.selections.values())
     cells_n = len(cells)
 
     for i, cell in enumerate(cells):
-        dpg.set_value("table_progress", i / cells_n)
+        yield (i / cells_n)
         if dpg.does_item_exist(cell):
             dpg.set_value(cell, False)
             row_select_callback(cell, False)
-
-    dpg.set_value("table_progress", 0)
 
 
 def setup_table(csv_path: Path):
@@ -235,9 +218,9 @@ def setup_table(csv_path: Path):
         width=-1,
     )
 
-    cols_to_hide = list(set(RESULTS_JUNK) | set(RESULT_KEYS_ERR))
-    toggle_table_columns(cols_to_hide, False)
     enable_table_controls()
+    populate_table()
+
     dpg.configure_item(TABLE, sortable=True)
 
 
@@ -249,46 +232,33 @@ def csv_file_dialog_callback(_, app_data: dict):
     setup_table(Path(selection))
 
 
-def toggle_highlight_table(df: pd.DataFrame):
+def toggle_highlight_table():
     if dpg.get_value("table_highlight_checkbox"):
-        unhighlight_table(
-            df,
-        )
-        highlight_table(
-            df,
-        )
+        unhighlight_table()
+        highlight_table()
     else:
-        unhighlight_table(
-            df,
-        )
+        unhighlight_table()
 
 
-def unhighlight_table(
-    df: pd.DataFrame,
-):
-    df = select_rows(df)
+def unhighlight_table():
+    df = table_data.select_rows_range()
     df_n = df.shape[0]
-    for i in range(df.shape[0]):
-        dpg.set_value("table_progress", i / df_n)
+    err = False
+    for i in range(df_n):
         for j in range(df.shape[1]):
-            dpg.unhighlight_table_cell(TABLE, i, j)
-    dpg.set_value("table_progress", 0)
+            try:
+                dpg.unhighlight_table_cell(TABLE, i, j)
+            except:
+                err = True
+    if err:
+        logger.warning(f"Couldn't properly unhighlight table: {TABLE}")
 
 
-def selected_co_clipboard():
-    table_data.selected_to_clipboard()
-
-
-def highlight_table(
-    df: pd.DataFrame,
-):
-    unhighlight_table(df)
-    df = select_rows(df)
+def highlight_table():
+    df = table_data.select_rows_range()
     col_ids = [df.columns.get_loc(c) for c in RESULT_ELEMENTS if c in df]
     arr = df.iloc[:, col_ids].replace(["< LOD", ""], 0).to_numpy().astype(float)
-    arr_n = len(arr)
     for row_i, row in enumerate(arr):
-        dpg.set_value("table_progress", row_i / arr_n)
         t = np.nan_to_num(row / np.max(row), nan=0.0)
         t = np.log(t + 0.01)
         t = np.interp(t, (t.min(), t.max()), (0.0, 1.0))
@@ -297,7 +267,6 @@ def highlight_table(
             norm = [255.0, 255.0, 255.0, min(val * 100.0 + 20.0, 100.0)]
             color = [int(sample[i] * norm[i]) for i in range(len(sample))]
             dpg.highlight_table_cell(TABLE, row_i, column, color)
-    dpg.set_value("table_progress", 0)
 
 
 def add_plot(path: Path):
@@ -325,6 +294,21 @@ def add_plot(path: Path):
 def pdz_file_dialog_callback(_, app_data: dict[str, str]):
     global pdz_folder
     pdz_folder = app_data.get("file_path_name", "")
+
+
+def setup_dev():
+    pdz_file_dialog_callback(
+        "",
+        {"file_path_name": "/home/puglet5/Documents/PROJ/test_data/smalts pdz"},
+    )
+    csv_file_dialog_callback(
+        "",
+        {
+            "selections": {
+                "1": "/home/puglet5/Documents/PROJ/XRFSplitter/test/fixtures/Results.csv"
+            }
+        },
+    )
 
 
 with dpg.handler_registry():
@@ -390,7 +374,17 @@ with dpg.window(
                 dpg.add_menu_item(label="Setting 1", check=True)
                 dpg.add_menu_item(label="Setting 2")
 
-        dpg.add_menu_item(label="Help")
+        with dpg.menu(label="Window"):
+            dpg.add_menu_item(
+                label="Wait For Input",
+                check=True,
+                tag="wait_for_input_menu",
+                callback=lambda s, a: dpg.configure_app(wait_for_input=a),
+            )
+            dpg.add_menu_item(
+                label="Toggle Fullscreen",
+                callback=lambda: dpg.toggle_viewport_fullscreen(),
+            )
         with dpg.menu(label="Tools"):
             dpg.add_menu_item(
                 label="Show About", callback=lambda: dpg.show_tool(dpg.mvTool_About)
@@ -442,7 +436,7 @@ with dpg.window(
                         label="Show Err columns",
                         default_value=True,
                         tag="err_col_checkbox",
-                        callback=lambda _s, a: toggle_table_columns(RESULT_KEYS_ERR, a),
+                        callback=lambda _s, _a: populate_table(),
                         enabled=False,
                         show=False,
                     )
@@ -451,7 +445,7 @@ with dpg.window(
                         label="Show junk columns",
                         default_value=True,
                         tag="junk_col_checkbox",
-                        callback=lambda _s, a: toggle_table_columns(RESULTS_JUNK, a),
+                        callback=lambda _s, _a: populate_table(),
                         enabled=False,
                         show=False,
                     )
@@ -460,7 +454,7 @@ with dpg.window(
                         label="Show '< LOD'",
                         default_value=True,
                         tag="lod_checkbox",
-                        callback=lambda _s, a: toggle_lod(),
+                        callback=lambda _s, _a: populate_table(),
                         enabled=False,
                         show=False,
                     )
@@ -468,10 +462,8 @@ with dpg.window(
                     dpg.add_checkbox(
                         label="Highlight table",
                         tag="table_highlight_checkbox",
-                        default_value=False,
-                        callback=lambda _s, _a: toggle_highlight_table(
-                            table_data.current
-                        ),
+                        default_value=True,
+                        callback=lambda _s, _a: toggle_highlight_table(),
                         show=False,
                         enabled=(
                             not dpg.get_value("err_col_checkbox")
@@ -491,7 +483,7 @@ with dpg.window(
                             max_clamped=True,
                             default_value=1,
                             on_enter=True,
-                            callback=lambda _s, _a: toggle_lod(),
+                            callback=lambda _s, _a: populate_table(),
                         )
                         dpg.add_text("to")
                         dpg.add_input_int(
@@ -503,7 +495,7 @@ with dpg.window(
                             min_clamped=True,
                             max_clamped=True,
                             on_enter=True,
-                            callback=lambda s, _a: toggle_lod(),
+                            callback=lambda s, _a: populate_table(),
                         )
                         dpg.add_text(
                             "(?)", tag="range_tooltip", color=(200, 200, 200, 100)
@@ -566,28 +558,13 @@ with dpg.window(
                     height=-1,
                     width=-1,
                 ):
-                    dpg.add_table_column(label="File #")
-
+                    dpg.add_table_column(label=ID_COL)
 
 dpg.bind_theme(global_theme)
+dpg.set_frame_callback(3, setup_dev)
 dpg.setup_dearpygui()
-
-pdz_file_dialog_callback(
-    "",
-    {"file_path_name": "/home/puglet5/Documents/PROJ/test_data/smalts pdz"},
-)
-csv_file_dialog_callback(
-    "",
-    {
-        "selections": {
-            "1": "/home/puglet5/Documents/PROJ/XRFSplitter/test/fixtures/Results.csv"
-        }
-    },
-)
-highlight_table(table_data.current)  # type: ignore
-dpg.set_value("table_highlight_checkbox", True)
-
 dpg.show_viewport()
+dpg.set_viewport_vsync(True)
 dpg.set_primary_window(WINDOW, True)
 dpg.start_dearpygui()
 dpg.destroy_context()

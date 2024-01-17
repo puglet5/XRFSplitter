@@ -13,6 +13,7 @@ from pathlib import Path
 from struct import unpack
 from typing import Any, Callable, Literal, NotRequired, ParamSpec, TypedDict, TypeVar
 
+import dearpygui.dearpygui as dpg
 import pandas as pd
 
 logger = logging.getLogger(__name__)
@@ -402,6 +403,7 @@ RESULTS_JUNK = [
     "Match Qual 3",
 ]
 FMTS = Literal["B", "h", "i", "I", "f", "s", "10", "5"]
+ID_COL = "File #"
 
 
 def construct_data(filepath: Path):
@@ -412,7 +414,7 @@ def construct_data(filepath: Path):
 
     header_ids: list[int] = []
     for i, line in enumerate(lines_arr):
-        if line[0] == "File #":
+        if line[0] == ID_COL:
             header_ids.append(i)
 
     els_per_header: list[int] = [
@@ -694,15 +696,30 @@ P = ParamSpec("P")
 
 def log_exec_time(f: Callable[P, T]) -> Callable[P, T]:
     @wraps(f)
-    def timeit_wrapper(*args, **kwargs) -> T:
+    def _wrapper(*args, **kwargs) -> T:
         start_time = time.perf_counter()
         result = f(*args, **kwargs)
-        end_time = time.perf_counter()
-        total_time = end_time - start_time
-        logger.debug(f"{f.__name__}: {total_time} s.")
+        logger.debug(f"{f.__name__}: {time.perf_counter() - start_time} s.")
         return result
 
-    return timeit_wrapper  # type: ignore
+    return _wrapper  # type: ignore
+
+
+def progress_bar(f):
+    @wraps(f)
+    def _wrapper(*args, **kwargs):
+        progress_generator = f(*args, **kwargs)
+        try:
+            while True:
+                progress = next(progress_generator)
+                dpg.set_value("table_progress", progress)
+        except StopIteration as result:
+            dpg.set_value("table_progress", 0)
+            return result.value
+        except TypeError:
+            return None
+
+    return _wrapper
 
 
 class SpectraData(TypedDict):
@@ -719,6 +736,7 @@ class TableData:
     def __post_init__(self):
         self.selections = {}
         self.selected_rows = []
+        self.selected_rows_range = (1, -1)
         self.selected_columns = list(set(RESULTS_JUNK) | set(RESULT_KEYS_ERR))
         raw_csv = self._raw_to_csv(self._results_to_array(self._construct()))
         self.original = pd.read_csv(
@@ -776,7 +794,7 @@ class TableData:
 
         header_ids: list[int] = []
         for i, line in enumerate(lines_arr):
-            if line[0] == "File #":
+            if line[0] == ID_COL:
                 header_ids.append(i)
 
         els_per_header: list[int] = [
@@ -836,22 +854,30 @@ class TableData:
             )
             self.current = self.original[ordered_intersection].copy()
         else:
-            self.current = self.current.drop(keys, axis=1)
+            self.current = self.current.drop(keys, axis=1, errors="ignore")
 
         return self.current
 
-    def select_rows_range(self, df: pd.DataFrame, row_range: tuple[int, int]):
+    def select_rows_range(self, row_range: tuple[int, int] | None = None):
+        if row_range is None:
+            row_range = self.selected_rows_range
         if row_range[1] == -1:
-            filtered = df.loc[pd.to_numeric(df["File #"]) >= row_range[0]]
+            filtered = self.current.loc[
+                pd.to_numeric(self.current[ID_COL]) >= row_range[0]
+            ]
         else:
-            filtered = df.loc[
-                pd.to_numeric(df["File #"]).isin(range(row_range[0], row_range[1] + 1))
+            filtered = self.current.loc[
+                pd.to_numeric(self.current[ID_COL]).isin(
+                    range(row_range[0], row_range[1] + 1)
+                )
             ]
 
         return filtered
 
-    def select_rows_list(self, df: pd.DataFrame, row_list: list[str]):
-        filtered = df.loc[df["File #"].isin(row_list)].copy()
+    def select_rows_list(self, row_list: list[str] | None):
+        if row_list is None:
+            row_list = self.selected_rows
+        filtered = self.current.loc[self.current[ID_COL].isin(row_list)].copy()
         return filtered
 
     def sort(self, column: str, reverse: bool):
@@ -868,7 +894,5 @@ class TableData:
         return self.current
 
     def selected_to_clipboard(self):
-        selected_rows = self.current[
-            self.current["File #"].isin(self.selections)
-        ]
+        selected_rows = self.current[self.current[ID_COL].isin(self.selections)]
         selected_rows.to_clipboard(excel=True, index=False)
