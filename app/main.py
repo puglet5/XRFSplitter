@@ -169,6 +169,7 @@ def populate_table():
                 callback=row_select_callback,
                 tag=selections.get(arr[i, 0], 0),
             )
+            dpg.bind_item_handler_registry(dpg.last_item(), "row_hover_handler")
             for j in range(1, arr.shape[1]):
                 dpg.add_selectable(
                     label=arr[i, j],
@@ -196,6 +197,8 @@ def deselect_all_rows():
 def remove_pca_plot():
     dpg.delete_item("pca_y_axis", children_only=True)
     dpg.delete_item("pca_plots", children_only=True, slot=0)
+    dpg.configure_item("pca_x_axis", label="PC1")
+    dpg.configure_item("pca_y_axis", label="PC2")
 
 
 def update_pca_plot():
@@ -212,7 +215,7 @@ def update_pca_plot():
                     x,
                     y,
                     parent="pca_y_axis",
-                    fill=(30, 120, 200, 10),
+                    fill=(30, 120, 200, 20),
                 )
 
     x = plot_data.pca_data.T[0].tolist()
@@ -225,19 +228,19 @@ def update_pca_plot():
 
     for x, y, label in zip(x, y, plot_data.pdz_data.keys()):
         dpg.add_plot_annotation(
+            tag=f"annotation_{label}",
             label=label,
-            clamped=False,
+            clamped=True,
             default_value=(x, y),
             offset=(-1, 1),
-            color=[255, 255, 255, 128],
+            color=[255, 255, 255, 100],
             parent="pca_plots",
         )
-    print(dpg.get_item_children("pca_plots"))
 
     variance = plot_data.pca_info.explained_variance_ratio_
     sum = variance.sum()
 
-    dpg.configure_item("pca_x_axis", label=f"PC2 ({variance[0]/sum*100:,.2f}%)")
+    dpg.configure_item("pca_x_axis", label=f"PC1 ({variance[0]/sum*100:,.2f}%)")
     dpg.configure_item("pca_y_axis", label=f"PC2 ({variance[1]/sum*100:,.2f}%)")
 
     # dpg.fit_axis_data("pca_x_axis")
@@ -312,6 +315,78 @@ def unhighlight_table():
                 err = True
     if err:
         logger.warning(f"Couldn't properly unhighlight table: {TABLE}")
+
+
+def row_hover_callback(_s, row):
+    row_label = dpg.get_item_label(row)
+    if row_label is None:
+        return
+
+    if not (annotations := dpg.get_item_children("pca_plots", 0)):
+        return
+
+    if len(annotations) < 4:
+        return
+
+    for a in annotations:
+        dpg.configure_item(a, color=[255, 255, 255, 100])
+
+    if not dpg.does_item_exist(f"annotation_{row_label}"):
+        return
+
+    dpg.configure_item(f"annotation_{row_label}", color=(0, 119, 200, 255))
+
+
+def collapsible_clicked_callback(s, a):
+    plots_visible: bool = dpg.get_item_state("plots_wrapper")[
+        "clicked"
+    ] != dpg.is_item_visible("plots_tabs")
+    table_visible: bool = dpg.get_item_state("table_wrapper")[
+        "clicked"
+    ] != dpg.is_item_visible(TABLE)
+
+    vp_height = dpg.get_viewport_height()
+
+    if plots_visible and not table_visible:
+        dpg.configure_item("pca_plots", height=-50)
+        dpg.configure_item("pdz_plots", height=-50)
+
+    if plots_visible and table_visible:
+        dpg.configure_item("pca_plots", height=vp_height // 2)
+        dpg.configure_item("pdz_plots", height=vp_height // 2)
+        dpg.configure_item(TABLE, height=-1)
+
+    if not plots_visible and table_visible:
+        dpg.configure_item(TABLE, height=-1)
+
+
+def window_resize_callback(s, a):
+    plots_visible = dpg.is_item_visible("plots_tabs")
+    table_visible = dpg.is_item_visible(TABLE)
+
+    vp_height = dpg.get_viewport_height()
+
+    if plots_visible and not table_visible:
+        dpg.configure_item("pca_plots", height=-50)
+        dpg.configure_item("pdz_plots", height=-50)
+
+    if plots_visible and table_visible:
+        dpg.configure_item("pca_plots", height=vp_height // 2)
+        dpg.configure_item("pdz_plots", height=vp_height // 2)
+        dpg.configure_item(TABLE, height=-1)
+
+    if not plots_visible and table_visible:
+        dpg.configure_item(TABLE, height=-1)
+
+
+with dpg.item_handler_registry(tag="row_hover_handler"):
+    dpg.add_item_hover_handler(callback=row_hover_callback)
+
+with dpg.item_handler_registry(tag="collapsible_clicked_handler"):
+    dpg.add_item_clicked_handler(callback=collapsible_clicked_callback)
+
+with dpg.item_handler_registry(tag="window_resize_handler"):
+    dpg.add_item_resize_handler(callback=window_resize_callback)
 
 
 def highlight_table():
@@ -448,11 +523,7 @@ with dpg.theme() as pca_theme:
 
 
 with dpg.window(
-    label="xrfsplitter",
-    tag=WINDOW,
-    autosize=True,
-    user_data={},
-    delay_search=True,
+    label="xrfsplitter", tag=WINDOW, horizontal_scrollbar=False, no_scrollbar=True
 ):
     with dpg.menu_bar(tag="menu_bar"):
         with dpg.menu(label="File"):
@@ -599,14 +670,16 @@ with dpg.window(
                     )
 
         with dpg.child_window(border=False, width=-1, tag="data"):
-            with dpg.collapsing_header(label="Plots", default_open=False):
-                with dpg.tab_bar():
+            with dpg.collapsing_header(
+                label="Plots", default_open=False, tag="plots_wrapper"
+            ):
+                with dpg.tab_bar(tag="plots_tabs"):
                     with dpg.tab(label="PDZ"):
                         with dpg.plot(
                             tag="pdz_plots",
                             crosshairs=True,
                             anti_aliased=True,
-                            height=400,
+                            height=-50,
                             width=-1,
                         ):
                             dpg.add_plot_legend(location=9)
@@ -619,7 +692,7 @@ with dpg.window(
                             tag="pca_plots",
                             crosshairs=True,
                             anti_aliased=True,
-                            height=400,
+                            height=-50,
                             width=-1,
                             equal_aspects=True,
                         ):
@@ -631,13 +704,11 @@ with dpg.window(
                                 dpg.mvYAxis, label="PC1", tag="pca_y_axis"
                             )
 
-                dpg.add_spacer(height=4)
-                dpg.add_separator()
-                dpg.add_spacer(height=4)
+                # dpg.add_spacer(height=4)
+                # dpg.add_separator()
+                # dpg.add_spacer(height=4)
 
-            with dpg.collapsing_header(
-                label="Results Table", default_open=True, tag="table_wrapper"
-            ):
+            with dpg.group(tag="table_wrapper"):
                 dpg.add_progress_bar(tag="table_progress", width=-1, height=10)
                 with dpg.table(
                     label="Results table",
@@ -667,6 +738,9 @@ with dpg.window(
 
 dpg.bind_theme(global_theme)
 dpg.bind_item_theme("pca_plots", pca_theme)
+dpg.bind_item_handler_registry("table_wrapper", "collapsible_clicked_handler")
+dpg.bind_item_handler_registry("plots_wrapper", "collapsible_clicked_handler")
+dpg.bind_item_handler_registry(WINDOW, "window_resize_handler")
 dpg.set_frame_callback(3, setup_dev)
 dpg.setup_dearpygui()
 dpg.show_viewport()
