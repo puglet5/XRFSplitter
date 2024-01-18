@@ -1,11 +1,10 @@
 import logging
-import logging.config
 import os
 
 import coloredlogs
 import dearpygui.dearpygui as dpg
 import numpy as np
-import pandas as pd
+from memory_profiler import profile
 
 from app.utils import *
 
@@ -441,13 +440,13 @@ def pdz_file_dialog_callback(_, app_data: dict[str, str]):
 def setup_dev():
     pdz_file_dialog_callback(
         "",
-        {"file_path_name": "/home/puglet5/Documents/PROJ/test_data/smalts pdz"},
+        {"file_path_name": "/home/puglet5/Documents/Lab/smalts pdz"},
     )
     csv_file_dialog_callback(
         "",
         {
             "selections": {
-                "1": "/home/puglet5/Documents/PROJ/XRFSplitter/test/fixtures/Results.csv"
+                "1": "/home/puglet5/Documents/PROJ/xrfsplitter/test/fixtures/Results.csv"
             }
         },
     )

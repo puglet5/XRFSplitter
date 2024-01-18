@@ -23,7 +23,7 @@ from matplotlib import pyplot as plt
 
 matplotlib.use("agg")
 from sklearn.decomposition import PCA
-from sklearn.preprocessing import StandardScaler, minmax_scale
+from sklearn.preprocessing import minmax_scale
 
 logger = logging.getLogger(__name__)
 
@@ -757,8 +757,6 @@ class PlotData:
 
         data = np.array(y_data, dtype=float)
         data = minmax_scale(data, feature_range=(0, 1), axis=1)
-        scaler = StandardScaler()
-        # data =scaler.fit_transform(data)
         pca = PCA(n_components=2)
         pca_data = pca.fit_transform(data)
         x = pca_data.T[0]
@@ -778,6 +776,8 @@ class PlotData:
 
         self.pca_shapes = allsegs
         self.pca_data = pca_data
+
+        plt.clf()
 
 
 @dataclass
@@ -906,7 +906,7 @@ class TableData:
                 set(original_columns) & set(columns_to_show),
                 key=original_columns.index,
             )
-            self.current = self.original[ordered_intersection].copy()
+            self.current = self.original[ordered_intersection]
         else:
             self.current = self.current.drop(keys, axis=1, errors="ignore")
 
@@ -931,7 +931,7 @@ class TableData:
     def select_rows_list(self, row_list: list[str] | None):
         if row_list is None:
             row_list = self.selected_rows
-        filtered = self.current.loc[self.current[ID_COL].isin(row_list)].copy()
+        filtered = self.current.loc[self.current[ID_COL].isin(row_list)]
         return filtered
 
     def sort(self, column: str, reverse: bool):

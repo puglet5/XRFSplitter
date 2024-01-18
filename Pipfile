@@ -21,6 +21,7 @@ pandas-stubs = "*"
 setuptools = "*"
 ipykernel = "*"
 nuitka = "*"
+memory-profiler = "*"
 
 [requires]
 python_version = "3.11"
