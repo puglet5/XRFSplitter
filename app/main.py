@@ -107,22 +107,22 @@ def row_select_callback(cell: int, value: bool):
         if f"0{spectrum_label}" in filename.split("-")[0]
     ]
     file = files[0] if files else None
-
-    if value:
-        selections[spectrum_label] = int(cell)
-        if file is not None:
-            path = Path(f"{plot_data.pdz_folder}/{file}")
-            add_pdz_plot(path, spectrum_label)
-            if len(plot_data.pdz_data) > 3:
-                update_pca_plot()
-    else:
-        selections.pop(spectrum_label, None)
-        if file is not None:
-            remove_pdz_plot(spectrum_label)
-            if len(plot_data.pdz_data) > 3:
-                update_pca_plot()
-            else:
-                remove_pca_plot()
+    with dpg.mutex():
+        if value:
+            selections[spectrum_label] = int(cell)
+            if file is not None:
+                path = Path(f"{plot_data.pdz_folder}/{file}")
+                add_pdz_plot(path, spectrum_label)
+                if len(plot_data.pdz_data) > 3:
+                    update_pca_plot()
+        else:
+            selections.pop(spectrum_label, None)
+            if file is not None:
+                remove_pdz_plot(spectrum_label)
+                if len(plot_data.pdz_data) > 3:
+                    update_pca_plot()
+                else:
+                    remove_pca_plot()
 
 
 @log_exec_time
@@ -437,13 +437,13 @@ def pdz_file_dialog_callback(_, app_data: dict[str, str]):
 def setup_dev():
     pdz_file_dialog_callback(
         "",
-        {"file_path_name": "/home/puglet5/Documents/Lab/smalts pdz"},
+        {"file_path_name": "/home/puglet5/Documents/PROJ/test_data/smalts pdz"},
     )
     csv_file_dialog_callback(
         "",
         {
             "selections": {
-                "1": "/home/puglet5/Documents/PROJ/xrfsplitter/test/fixtures/Results.csv"
+                "1": "/home/puglet5/Documents/PROJ/XRFSplitter/test/fixtures/Results.csv"
             }
         },
     )
