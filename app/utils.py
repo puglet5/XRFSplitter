@@ -22,7 +22,9 @@ import scipy.stats as st
 from matplotlib import pyplot as plt
 
 matplotlib.use("agg")
-from sklearn.decomposition import PCA
+plt.ioff()
+
+from sklearn.decomposition import PCA, FastICA, fastica
 from sklearn.preprocessing import minmax_scale
 
 logger = logging.getLogger(__name__)
@@ -491,6 +493,38 @@ def element_z_to_name(z):
         return None
 
 
+T = TypeVar("T")
+P = ParamSpec("P")
+
+
+def log_exec_time(f: Callable[P, T]) -> Callable[P, T]:
+    @wraps(f)
+    def _wrapper(*args, **kwargs) -> T:
+        start_time = time.perf_counter()
+        result = f(*args, **kwargs)
+        logger.debug(f"{f.__name__}: {time.perf_counter() - start_time} s.")
+        return result
+
+    return _wrapper  # type: ignore
+
+
+def progress_bar(f):
+    @wraps(f)
+    def _wrapper(*args, **kwargs):
+        progress_generator = f(*args, **kwargs)
+        try:
+            while True:
+                progress = next(progress_generator)
+                dpg.set_value("table_progress", progress)
+        except StopIteration as result:
+            dpg.set_value("table_progress", 0)
+            return result.value
+        except TypeError:
+            return None
+
+    return _wrapper
+
+
 @dataclass
 class XRFSpectrum:
     datetime: dt = field(default=dt(1970, 1, 1, 0), init=False)
@@ -699,38 +733,6 @@ class PDZFile:
                     self._append_spectrum()
 
 
-T = TypeVar("T")
-P = ParamSpec("P")
-
-
-def log_exec_time(f: Callable[P, T]) -> Callable[P, T]:
-    @wraps(f)
-    def _wrapper(*args, **kwargs) -> T:
-        start_time = time.perf_counter()
-        result = f(*args, **kwargs)
-        logger.debug(f"{f.__name__}: {time.perf_counter() - start_time} s.")
-        return result
-
-    return _wrapper  # type: ignore
-
-
-def progress_bar(f):
-    @wraps(f)
-    def _wrapper(*args, **kwargs):
-        progress_generator = f(*args, **kwargs)
-        try:
-            while True:
-                progress = next(progress_generator)
-                dpg.set_value("table_progress", progress)
-        except StopIteration as result:
-            dpg.set_value("table_progress", 0)
-            return result.value
-        except TypeError:
-            return None
-
-    return _wrapper
-
-
 @dataclass
 class PlotData:
     pdz_folder: str | Path
@@ -743,37 +745,28 @@ class PlotData:
         self.pdz_data = {}
 
     def generate_pca_data(self):
-        y_data = []
-        for file in list(self.pdz_data.values()):
-            spectra_sum = np.array(
-                [
-                    file.spectra[1].counts[i] + file.spectra[2].counts[i]
-                    for i, _ in enumerate(file.spectra[1].counts)
-                    if i < 800
-                ]
-            )
+        y_data = [
+            [a + b for a, b in zip(file.spectra[1].counts, file.spectra[2].counts)][
+                :800
+            ]
+            for file in self.pdz_data.values()
+        ]
 
-            y_data.append(spectra_sum)
-
-        data = np.array(y_data, dtype=float)
-        data = minmax_scale(data, feature_range=(0, 1), axis=1)
-        pca = PCA(n_components=2)
+        data = minmax_scale(y_data, feature_range=(0, 1), axis=1)
+        pca = PCA(n_components=2, svd_solver="full")
         pca_data = pca.fit_transform(data)
-        x = pca_data.T[0]
-        y = pca_data.T[1]
+        x, y = pca_data.T
         xmin, xmax = x.min() - 1, x.max() + 1
         ymin, ymax = y.min() - 1, y.max() + 1
-
-        self.pca_info = pca
 
         xx, yy = np.mgrid[xmin:xmax:100j, ymin:ymax:100j]
         positions = np.vstack([xx.ravel(), yy.ravel()])
         kernel = st.gaussian_kde(pca_data.T)
         f = np.reshape(kernel(positions).T, xx.shape)
 
-        plt.ioff()
         allsegs = plt.contour(xx, yy, f).allsegs
 
+        self.pca_info = pca
         self.pca_shapes = allsegs
         self.pca_data = pca_data
 

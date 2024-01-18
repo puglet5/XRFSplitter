@@ -4,7 +4,6 @@ import os
 import coloredlogs
 import dearpygui.dearpygui as dpg
 import numpy as np
-from memory_profiler import profile
 
 from app.utils import *
 
@@ -207,8 +206,7 @@ def update_pca_plot():
 
     for i in plot_data.pca_shapes:
         for j in i:
-            x = j.T[0].tolist()
-            y = j.T[1].tolist()
+            x, y = j.T.tolist()
             if x and y:
                 dpg.add_area_series(
                     x,
@@ -217,8 +215,7 @@ def update_pca_plot():
                     fill=(30, 120, 200, 20),
                 )
 
-    x = plot_data.pca_data.T[0].tolist()
-    y = plot_data.pca_data.T[1].tolist()
+    x, y = plot_data.pca_data.T.tolist()
     dpg.add_scatter_series(
         x,
         y,
@@ -229,7 +226,7 @@ def update_pca_plot():
         dpg.add_plot_annotation(
             tag=f"annotation_{label}",
             label=label,
-            clamped=True,
+            clamped=False,
             default_value=(x, y),
             offset=(-1, 1),
             color=[255, 255, 255, 100],
