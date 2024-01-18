@@ -114,12 +114,14 @@ def row_select_callback(cell: int, value: bool):
                 path = Path(f"{plot_data.pdz_folder}/{file}")
                 add_pdz_plot(path, spectrum_label)
                 if len(plot_data.pdz_data) > 3:
+                    dpg.bind_item_handler_registry(cell, "row_hover_handler")
                     update_pca_plot()
         else:
             selections.pop(spectrum_label, None)
             if file is not None:
                 remove_pdz_plot(spectrum_label)
                 if len(plot_data.pdz_data) > 3:
+                    dpg.bind_item_handler_registry(cell, "row_hover_handler")
                     update_pca_plot()
                 else:
                     remove_pca_plot()
@@ -167,7 +169,6 @@ def populate_table():
                 callback=row_select_callback,
                 tag=selections.get(arr[i, 0], 0),
             )
-            dpg.bind_item_handler_registry(dpg.last_item(), "row_hover_handler")
             for j in range(1, arr.shape[1]):
                 dpg.add_selectable(
                     label=arr[i, j],
@@ -630,7 +631,7 @@ with dpg.window(
                             min_value=1,
                             min_clamped=True,
                             max_clamped=True,
-                            default_value=1800,
+                            default_value=1,
                             on_enter=True,
                             callback=lambda _s, _a: populate_table(),
                         )
@@ -640,7 +641,7 @@ with dpg.window(
                             width=100,
                             max_value=10000,
                             min_value=-1,
-                            default_value=1820,
+                            default_value=-1,
                             min_clamped=True,
                             max_clamped=True,
                             on_enter=True,
