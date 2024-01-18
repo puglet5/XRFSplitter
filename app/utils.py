@@ -1,7 +1,6 @@
 import csv
 import functools
 import logging
-import logging as log
 import os
 import shutil
 import time
@@ -24,7 +23,7 @@ from matplotlib import pyplot as plt
 matplotlib.use("agg")
 plt.ioff()
 
-from sklearn.decomposition import PCA, FastICA, fastica
+from sklearn.decomposition import PCA
 from sklearn.preprocessing import minmax_scale
 
 logger = logging.getLogger(__name__)
@@ -481,7 +480,7 @@ def element_z_to_symbol(z: int) -> str:
     elif z <= 118:
         return ELEMENT_SYMBOLS[z - 1]
     else:
-        log.error("Error: Z out of range")
+        logging.error("Error: Z out of range")
         return "ERR"
 
 
@@ -489,7 +488,7 @@ def element_z_to_name(z):
     if z <= 118:
         return ELEMENT_NAMES[z - 1]
     else:
-        log.error("Error: Z out of range")
+        logging.error("Error: Z out of range")
         return None
 
 
@@ -752,7 +751,7 @@ class PlotData:
             for file in self.pdz_data.values()
         ]
 
-        data = minmax_scale(y_data, feature_range=(0, 1), axis=1)
+        data = minmax_scale(np.array(y_data), feature_range=(0, 1), axis=1)
         pca = PCA(n_components=2, svd_solver="full")
         pca_data = pca.fit_transform(data)
         x, y = pca_data.T
@@ -784,7 +783,7 @@ class TableData:
         self.selections = {}
         self.selected_rows = []
         self.selected_rows_range = (1, -1)
-        self.selected_columns = list(set(RESULTS_JUNK) | set(RESULT_KEYS_ERR))
+        self.selected_columns = set(RESULTS_JUNK) | set(RESULT_KEYS_ERR)
         raw_csv = self._raw_to_csv(self._results_to_array(self._construct()))
         self.original = pd.read_csv(
             raw_csv,
