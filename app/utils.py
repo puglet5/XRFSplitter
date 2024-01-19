@@ -815,6 +815,19 @@ class PDZFile:
                 if self._read_bytes("h", 2) == 3:
                     self._append_spectrum()
 
+    def generate_plot_data(self):
+        if len(self.spectra) == 3:
+            counts = [
+                a + b for a, b in zip(self.spectra[1].counts, self.spectra[2].counts)
+            ]
+        else:
+            counts = self.spectra[0].counts
+
+        x = self.spectra[0].energies
+        y = counts
+
+        return x, y
+
 
 @dataclass
 class PlotData:
@@ -834,14 +847,9 @@ class PlotData:
         if len(self.pdz_data) < 3:
             return
 
-        y_data = [
-            [a + b for a, b in zip(file.spectra[1].counts, file.spectra[2].counts)][
-                :800
-            ]
-            for file in self.pdz_data.values()
-        ]
-
-        data = minmax_scale(np.array(y_data), feature_range=(0, 1), axis=1)
+        counts = [pdz.generate_plot_data()[1] for pdz in self.pdz_data.values()]
+        data = minmax_scale(np.array(counts), feature_range=(0, 1), axis=1)
+        
         pca = PCA(n_components=2, svd_solver="full")
         pca_data = pca.fit_transform(data)
         x, y = pca_data.T

@@ -447,13 +447,7 @@ def add_pdz_plot(path: Path, label: str):
 
     pdz = PDZFile(path)
     plot_data.pdz_data[label] = pdz
-    spectra_sum = [
-        pdz.spectra[1].counts[i] + pdz.spectra[2].counts[i]
-        for i, _ in enumerate(pdz.spectra[1].counts)
-    ]
-
-    x = pdz.spectra[2].energies
-    y = spectra_sum
+    x, y = pdz.generate_plot_data()
 
     dpg.add_line_series(
         x,
