@@ -1003,7 +1003,12 @@ class TableData:
 
         return self.current
 
-    def select_rows_range(self, row_range: tuple[int, int] | None = None):
+    def select_rows_range(
+        self,
+        row_range: tuple[int, int] | None = None,
+        show_empty_cols: bool = True,
+        show_empty_rows: bool = True,
+    ):
         if row_range is None:
             row_range = self.selected_rows_range
         if row_range[1] == -1:
@@ -1016,6 +1021,23 @@ class TableData:
                     range(row_range[0], row_range[1] + 1)
                 )
             ]
+
+        if not show_empty_cols or not show_empty_rows:
+            filtered = filtered.replace("", np.nan)
+
+        if not show_empty_cols and show_empty_rows:
+            filtered = filtered.dropna(how="all", axis=1).fillna("")
+
+        if not show_empty_rows and show_empty_cols:
+            filtered = filtered.dropna(
+                subset=filtered.columns.difference(["File #"]), how="all", axis=0
+            ).fillna("")
+
+        if not show_empty_rows and not show_empty_cols:
+            filtered = filtered.dropna(
+                subset=filtered.columns.difference(["File #"]), how="all", axis=0
+            )
+            filtered = filtered.dropna(how="all", axis=1).fillna("")
 
         return filtered
 

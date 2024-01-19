@@ -77,9 +77,15 @@ def enable_table_controls():
     dpg.show_item("table_highlight_checkbox")
     dpg.enable_item("lod_checkbox")
     dpg.show_item("lod_checkbox")
+    dpg.enable_item("empty_cols_checkbox")
+    dpg.show_item("empty_cols_checkbox")
+    dpg.enable_item("empty_rows_checkbox")
+    dpg.show_item("empty_rows_checkbox")
     dpg.set_value("err_col_checkbox", False)
     dpg.set_value("junk_col_checkbox", False)
     dpg.set_value("lod_checkbox", True)
+    dpg.set_value("empty_cols_checkbox", True)
+    dpg.set_value("empty_rows_checkbox", True)
 
 
 @log_exec_time
@@ -150,7 +156,10 @@ def populate_table():
     table_data.toggle_columns(RESULT_KEYS_ERR, dpg.get_value("err_col_checkbox"))
     table_data.selected_rows_range = (dpg.get_value("from"), dpg.get_value("to"))
     table_data.toggle_lod(dpg.get_value("lod_checkbox"))
-    df = table_data.select_rows_range()
+    df = table_data.select_rows_range(
+        show_empty_cols=bool(dpg.get_value("empty_cols_checkbox")),
+        show_empty_rows=bool(dpg.get_value("empty_rows_checkbox")),
+    )
 
     with dpg.mutex():
         if dpg.get_value("table_highlight_checkbox"):
@@ -176,6 +185,7 @@ def populate_table():
     row_n = arr.shape[0]
     for i in range(row_n):
         yield (i / row_n)
+        dpg.lock_mutex()
         with dpg.table_row(use_internal_label=False, parent=TABLE):
             label = arr[i, 0]
             dpg.add_selectable(
@@ -191,6 +201,7 @@ def populate_table():
                     disable_popup_close=True,
                     use_internal_label=False,
                 )
+        dpg.unlock_mutex()
 
     if dpg.get_value("table_highlight_checkbox"):
         highlight_table()
@@ -327,7 +338,10 @@ def toggle_highlight_table():
 
 
 def unhighlight_table():
-    df = table_data.select_rows_range()
+    df = table_data.select_rows_range(
+        show_empty_cols=bool(dpg.get_value("empty_cols_checkbox")),
+        show_empty_rows=bool(dpg.get_value("empty_rows_checkbox")),
+    )
     df_n = df.shape[0]
     err = False
     for i in range(df_n):
@@ -427,7 +441,10 @@ with dpg.item_handler_registry(tag="pca_plots_visible_handler"):
 
 
 def highlight_table():
-    df = table_data.select_rows_range()
+    df = table_data.select_rows_range(
+        show_empty_cols=bool(dpg.get_value("empty_cols_checkbox")),
+        show_empty_rows=bool(dpg.get_value("empty_rows_checkbox")),
+    )
     col_ids = [df.columns.get_loc(c) for c in RESULT_ELEMENTS if c in df]
     arr = df.iloc[:, col_ids].replace(["< LOD", ""], 0).to_numpy().astype(float)
     for row_i, row in enumerate(arr):
@@ -644,6 +661,24 @@ with dpg.window(
                         label="Show '< LOD'",
                         default_value=True,
                         tag="lod_checkbox",
+                        callback=lambda _s, _a: populate_table(),
+                        enabled=False,
+                        show=False,
+                    )
+
+                    dpg.add_checkbox(
+                        label="Show empty columns",
+                        default_value=True,
+                        tag="empty_cols_checkbox",
+                        callback=lambda _s, _a: populate_table(),
+                        enabled=False,
+                        show=False,
+                    )
+
+                    dpg.add_checkbox(
+                        label="Show empty rows",
+                        default_value=True,
+                        tag="empty_rows_checkbox",
                         callback=lambda _s, _a: populate_table(),
                         enabled=False,
                         show=False,
