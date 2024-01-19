@@ -994,13 +994,16 @@ class TableData:
 
     def toggle_columns(self, keys: list[str], state: bool):
         if state:
+            current_index = self.current.index
             columns_to_show = self.current.columns.tolist() + keys
             original_columns = self.original.columns.tolist()
             ordered_intersection = sorted(
                 set(original_columns) & set(columns_to_show),
                 key=original_columns.index,
             )
-            self.current = self.original[ordered_intersection]
+            self.current = self.original[ordered_intersection].reindex(
+                index=current_index
+            )
         else:
             self.current = self.current.drop(keys, axis=1, errors="ignore")
 
