@@ -845,8 +845,9 @@ class PlotData:
         pca = PCA(n_components=2, svd_solver="full")
         pca_data = pca.fit_transform(data)
         x, y = pca_data.T
-        xmin, xmax = x.min() - 1, x.max() + 1
-        ymin, ymax = y.min() - 1, y.max() + 1
+        pad = x.max() + y.max() - x.min() - y.min()
+        xmin, xmax = x.min() - pad, x.max() + pad
+        ymin, ymax = y.min() - pad, y.max() + pad
 
         xx, yy = np.mgrid[xmin:xmax:100j, ymin:ymax:100j]
         positions = np.vstack([xx.ravel(), yy.ravel()])
