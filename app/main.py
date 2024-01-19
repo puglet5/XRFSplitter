@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 
 import coloredlogs
 import dearpygui.dearpygui as dpg
@@ -112,9 +113,13 @@ def row_select_callback(cell: int, value: bool):
     files = [
         filename
         for filename in os.listdir(plot_data.pdz_folder)
-        if f"0{spectrum_label}" in filename.split("-")[0]
+        if filename.endswith(".pdz")
     ]
-    file = files[0] if files else None
+
+    p = re.compile(f"^([0]+){spectrum_label}-")
+
+    files_re = [s for s in files if p.match(s)]
+    file = files_re[0] if files else None
 
     with dpg.mutex():
         if value:
