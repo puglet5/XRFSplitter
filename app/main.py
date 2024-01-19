@@ -22,6 +22,8 @@ dpg.configure_app(
 
 TABLE = "results_table"
 WINDOW = "primary_window"
+global pca_plots_last_visible
+pca_plots_last_visible: int = 0
 
 
 def save_init():
@@ -94,8 +96,14 @@ def select_all_rows():
                 row_select_callback(cell, True)
 
 
+def pca_plots_is_visible():
+    return dpg.get_frame_count() - pca_plots_last_visible < 10
+
+
+@log_exec_time
 def row_select_callback(cell: int, value: bool):
     spectrum_label = dpg.get_item_label(cell)
+
     if spectrum_label is None:
         return
 
@@ -107,22 +115,25 @@ def row_select_callback(cell: int, value: bool):
         if f"0{spectrum_label}" in filename.split("-")[0]
     ]
     file = files[0] if files else None
+
     with dpg.mutex():
         if value:
-            selections[spectrum_label] = int(cell)
+            selections[spectrum_label] = cell
             if file is not None:
                 path = Path(f"{plot_data.pdz_folder}/{file}")
                 add_pdz_plot(path, spectrum_label)
                 if len(plot_data.pdz_data) > 3:
                     dpg.bind_item_handler_registry(cell, "row_hover_handler")
-                    update_pca_plot()
+                    if pca_plots_is_visible():
+                        update_pca_plot()
         else:
             selections.pop(spectrum_label, None)
             if file is not None:
                 remove_pdz_plot(spectrum_label)
                 if len(plot_data.pdz_data) > 3:
                     dpg.bind_item_handler_registry(cell, "row_hover_handler")
-                    update_pca_plot()
+                    if pca_plots_is_visible():
+                        update_pca_plot()
                 else:
                     remove_pca_plot()
 
@@ -166,7 +177,7 @@ def populate_table():
                 label=label,
                 span_columns=True,
                 default_value=(label in selections),
-                callback=row_select_callback,
+                callback=lambda s, a: row_select_callback(s, a),
                 tag=selections.get(arr[i, 0], 0),
             )
             for j in range(1, arr.shape[1]):
@@ -198,12 +209,22 @@ def remove_pca_plot():
     dpg.delete_item("pca_plots", children_only=True, slot=0)
     dpg.configure_item("pca_x_axis", label="PC1")
     dpg.configure_item("pca_y_axis", label="PC2")
+    plot_data.pca_data = None
+    plot_data.pca_info = None
+    plot_data.pca_shapes = None
 
 
 def update_pca_plot():
     plot_data.generate_pca_data()
     dpg.delete_item("pca_y_axis", children_only=True)
     dpg.delete_item("pca_plots", children_only=True, slot=0)
+
+    if (
+        plot_data.pca_shapes is None
+        or plot_data.pca_info is None
+        or plot_data.pca_data is None
+    ):
+        return
 
     for i in plot_data.pca_shapes:
         for j in i:
@@ -225,7 +246,7 @@ def update_pca_plot():
 
     for x, y, label in zip(x, y, plot_data.pdz_data.keys()):
         dpg.add_plot_annotation(
-            tag=f"annotation_{label}",
+            tag=f"ann_{label}",
             label=label,
             clamped=False,
             default_value=(x, y),
@@ -328,10 +349,10 @@ def row_hover_callback(_s, row):
     for a in annotations:
         dpg.configure_item(a, color=[255, 255, 255, 100])
 
-    if not dpg.does_item_exist(f"annotation_{row_label}"):
+    if not dpg.does_item_exist(f"ann_{row_label}"):
         return
 
-    dpg.configure_item(f"annotation_{row_label}", color=(0, 119, 200, 255))
+    dpg.configure_item(f"ann_{row_label}", color=(0, 119, 200, 255))
 
 
 def collapsible_clicked_callback(s, a):
@@ -374,6 +395,19 @@ def window_resize_callback(s, a):
         dpg.configure_item(TABLE, height=-1)
 
 
+def pca_plots_visible_callback(s, a):
+    global pca_plots_last_visible
+    if not pca_plots_is_visible():
+        try:
+            update_pca_plot()
+        except:
+            logger.warning("Couldn't update PCA plots")
+        finally:
+            pca_plots_last_visible = dpg.get_frame_count()
+
+    pca_plots_last_visible = dpg.get_frame_count()
+
+
 with dpg.item_handler_registry(tag="row_hover_handler"):
     dpg.add_item_hover_handler(callback=row_hover_callback)
 
@@ -382,6 +416,9 @@ with dpg.item_handler_registry(tag="collapsible_clicked_handler"):
 
 with dpg.item_handler_registry(tag="window_resize_handler"):
     dpg.add_item_resize_handler(callback=window_resize_callback)
+
+with dpg.item_handler_registry(tag="pca_plots_visible_handler"):
+    dpg.add_item_visible_handler(callback=pca_plots_visible_callback)
 
 
 def highlight_table():
@@ -631,7 +668,7 @@ with dpg.window(
                             min_value=1,
                             min_clamped=True,
                             max_clamped=True,
-                            default_value=1,
+                            default_value=1800,
                             on_enter=True,
                             callback=lambda _s, _a: populate_table(),
                         )
@@ -641,7 +678,7 @@ with dpg.window(
                             width=100,
                             max_value=10000,
                             min_value=-1,
-                            default_value=-1,
+                            default_value=1820,
                             min_clamped=True,
                             max_clamped=True,
                             on_enter=True,
@@ -736,6 +773,8 @@ dpg.bind_item_theme("pca_plots", pca_theme)
 dpg.bind_item_handler_registry("table_wrapper", "collapsible_clicked_handler")
 dpg.bind_item_handler_registry("plots_wrapper", "collapsible_clicked_handler")
 dpg.bind_item_handler_registry(WINDOW, "window_resize_handler")
+dpg.bind_item_handler_registry("pca_plots", "pca_plots_visible_handler")
+
 dpg.set_frame_callback(3, setup_dev)
 dpg.setup_dearpygui()
 dpg.show_viewport()

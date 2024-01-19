@@ -736,14 +736,20 @@ class PDZFile:
 class PlotData:
     pdz_folder: str | Path
     pdz_data: dict[str, PDZFile] = field(init=False)
-    pca_data: npt.NDArray[np.float_] = field(init=False)
-    pca_shapes: list[list[npt.NDArray[np.float_]]] = field(init=False)
-    pca_info: PCA = field(init=False)
+    pca_data: npt.NDArray[np.float_] | None = field(init=False)
+    pca_shapes: list[list[npt.NDArray[np.float_]]] | None = field(init=False)
+    pca_info: PCA | None = field(init=False)
 
     def __post_init__(self):
         self.pdz_data = {}
+        self.pca_info = None
+        self.pca_shapes = None
+        self.pca_data = None
 
     def generate_pca_data(self):
+        if len(self.pdz_data) < 3:
+            return
+
         y_data = [
             [a + b for a, b in zip(file.spectra[1].counts, file.spectra[2].counts)][
                 :800
