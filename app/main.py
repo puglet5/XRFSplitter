@@ -462,7 +462,12 @@ def add_pdz_plot(path: Path, label: str):
     if dpg.does_item_exist(f"{label}_plot"):
         return
 
-    pdz = PDZFile(path)
+    try:
+        pdz = PDZFile(path)
+    except:
+        logger.error(f"Error decoding .pdz file: {path}")
+        return
+
     plot_data.pdz_data[label] = pdz
     x, y = pdz.generate_plot_data()
 
