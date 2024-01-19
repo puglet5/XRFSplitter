@@ -133,8 +133,8 @@ def row_select_callback(cell: int, value: bool):
             if file is not None:
                 path = Path(f"{plot_data.pdz_folder}/{file}")
                 add_pdz_plot(path, spectrum_label)
+                dpg.bind_item_handler_registry(cell, "row_hover_handler")
                 if len(plot_data.pdz_data) > 3:
-                    dpg.bind_item_handler_registry(cell, "row_hover_handler")
                     if pca_plots_is_visible():
                         update_pca_plot()
         else:
@@ -142,7 +142,6 @@ def row_select_callback(cell: int, value: bool):
             if file is not None:
                 remove_pdz_plot(spectrum_label)
                 if len(plot_data.pdz_data) > 3:
-                    dpg.bind_item_handler_registry(cell, "row_hover_handler")
                     if pca_plots_is_visible():
                         update_pca_plot()
                 else:
