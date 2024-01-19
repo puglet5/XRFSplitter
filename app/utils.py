@@ -659,6 +659,7 @@ class PDZFile:
     user: str = field(default="", init=False)
     detector_type: str = field(default="", init=False)
     collimator_type: str = field(default="", init=False)
+    spectra_used: Literal["[1]", "[1+2]"] = field(init=False)
     _assay_time_live: float = field(default=0.0, init=False)
     _assay_time_total: float = field(default=0.0, init=False)
     _other: Any = field(default=None, init=False)
@@ -820,8 +821,10 @@ class PDZFile:
             counts = [
                 a + b for a, b in zip(self.spectra[1].counts, self.spectra[2].counts)
             ]
+            self.spectra_used = "[1+2]"
         else:
             counts = self.spectra[0].counts
+            self.spectra_used = "[1]"
 
         x = self.spectra[0].energies
         y = counts
@@ -849,7 +852,7 @@ class PlotData:
 
         counts = [pdz.generate_plot_data()[1] for pdz in self.pdz_data.values()]
         data = minmax_scale(np.array(counts), feature_range=(0, 1), axis=1)
-        
+
         pca = PCA(n_components=2, svd_solver="full")
         pca_data = pca.fit_transform(data)
         x, y = pca_data.T

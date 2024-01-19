@@ -475,7 +475,7 @@ def add_pdz_plot(path: Path, label: str):
         x,
         y,
         tag=f"{label}_plot",
-        label=f"[1+2] {pdz.name}",
+        label=f"{pdz.spectra_used} {pdz.name}",
         parent="y_axis",
     )
 
