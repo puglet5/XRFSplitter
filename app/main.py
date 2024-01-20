@@ -40,17 +40,20 @@ def sort_callback(sender: int | str, sort_specs: None | list[list[int]]):
     if sort_specs is None:
         return
 
-    sort_col_label: str = dpg.get_item_configuration(sort_specs[0][0])["label"]
+    sort_col_label: str | None = dpg.get_item_label(sort_specs[0][0])
+
+    if sort_col_label is None:
+        return
 
     reverse = sort_specs[0][1] < 0
-
-    current = table_data.current
-
+    current = table_data.current.copy()
     sorted = table_data.sort(sort_col_label, reverse)
 
     if current.equals(sorted):
-        logger.warning("Table already sorted")
+        logger.info(f"Table already sorted: {table_data.sorted_by}")
         return
+
+    table_data.sorted_by = (sort_col_label, reverse)
 
     populate_table()
 
@@ -184,19 +187,23 @@ def row_select_callback(cell: int, value: bool, check_keys=True, propagate=True)
                 remove_pca_plot()
 
 
+def prepare_data():
+    table_data.toggle_columns(RESULTS_JUNK, dpg.get_value("junk_col_checkbox"))
+    table_data.toggle_columns(RESULT_KEYS_ERR, dpg.get_value("err_col_checkbox"))
+    table_data.selected_rows_range = (dpg.get_value("from"), dpg.get_value("to"))
+    table_data.select_rows_range(
+        show_empty_cols=bool(dpg.get_value("empty_cols_checkbox")),
+        show_empty_rows=bool(dpg.get_value("empty_rows_checkbox")),
+    )
+    table_data.toggle_lod(dpg.get_value("lod_checkbox"))
+
+
 @log_exec_time
 @progress_bar
 def populate_table():
     global last_row_selected
 
-    table_data.toggle_columns(RESULTS_JUNK, dpg.get_value("junk_col_checkbox"))
-    table_data.toggle_columns(RESULT_KEYS_ERR, dpg.get_value("err_col_checkbox"))
-    table_data.selected_rows_range = (dpg.get_value("from"), dpg.get_value("to"))
-    table_data.toggle_lod(dpg.get_value("lod_checkbox"))
-    df = table_data.select_rows_range(
-        show_empty_cols=bool(dpg.get_value("empty_cols_checkbox")),
-        show_empty_rows=bool(dpg.get_value("empty_rows_checkbox")),
-    )
+    prepare_data()
 
     with dpg.mutex():
         if dpg.get_value("table_highlight_checkbox"):
@@ -206,8 +213,8 @@ def populate_table():
         except Exception:
             logger.warn(f"No table found: {TABLE}")
 
-        arr = df.to_numpy()
-        cols = df.columns.to_numpy()
+        arr = table_data.current.to_numpy()
+        cols = table_data.current.columns.tolist()
 
         for col in cols:
             dpg.add_table_column(
@@ -226,7 +233,8 @@ def populate_table():
         row_id = uuid.uuid4().int & (1 << 64) - 1
         with dpg.table_row(use_internal_label=False, parent=TABLE, tag=row_id):
             label = arr[i, 0]
-            previously_selected = label in selections
+            if previously_selected := label in selections:
+                last_row_selected = row_id
             dpg.add_selectable(
                 label=label,
                 span_columns=True,
@@ -234,8 +242,7 @@ def populate_table():
                 callback=lambda s, a: row_select_callback(s, a),
                 tag=selections.get(arr[i, 0], 0),
             )
-            if previously_selected:
-                last_row_selected = row_id
+
             for j in range(1, arr.shape[1]):
                 dpg.add_selectable(
                     label=arr[i, j],
@@ -376,20 +383,18 @@ def toggle_highlight_table():
 
 
 def unhighlight_table():
-    df = table_data.select_rows_range(
-        show_empty_cols=bool(dpg.get_value("empty_cols_checkbox")),
-        show_empty_rows=bool(dpg.get_value("empty_rows_checkbox")),
-    )
+    df = table_data.current
     df_n = df.shape[0]
-    err = False
+    err = None
     for i in range(df_n):
         for j in range(df.shape[1]):
             try:
                 dpg.unhighlight_table_cell(TABLE, i, j)
-            except:
-                err = True
-    if err:
-        logger.warning(f"Couldn't properly unhighlight table: {TABLE}")
+            except Exception as e:
+                err = e
+                break
+    if err is not None:
+        logger.warning(f"Couldn't properly unhighlight table: {TABLE}, {err}")
 
 
 def row_hover_callback(_s, row):
@@ -479,10 +484,7 @@ with dpg.item_handler_registry(tag="pca_plots_visible_handler"):
 
 
 def highlight_table():
-    df = table_data.select_rows_range(
-        show_empty_cols=bool(dpg.get_value("empty_cols_checkbox")),
-        show_empty_rows=bool(dpg.get_value("empty_rows_checkbox")),
-    )
+    df = table_data.current
     col_ids = [df.columns.get_loc(c) for c in RESULT_ELEMENTS if c in df]
     arr = df.iloc[:, col_ids].replace(["< LOD", ""], 0).to_numpy().astype(float)
     for row_i, row in enumerate(arr):
@@ -747,7 +749,7 @@ with dpg.window(
                             min_value=1,
                             min_clamped=True,
                             max_clamped=True,
-                            default_value=1800,
+                            default_value=1,
                             on_enter=True,
                             callback=populate_table,
                         )
@@ -757,7 +759,7 @@ with dpg.window(
                             width=100,
                             max_value=10000,
                             min_value=-1,
-                            default_value=1900,
+                            default_value=-1,
                             min_clamped=True,
                             max_clamped=True,
                             on_enter=True,

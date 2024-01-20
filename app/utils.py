@@ -1,3 +1,5 @@
+# PDZReader https://github.com/zebhall/PDZReader
+
 import csv
 import functools
 import logging
@@ -558,7 +560,6 @@ def write_csv(buf: StringIO, path: Path):
 
 
 def element_z_to_symbol(z: int) -> str:
-    """Returns 1-2 character Element symbol as a string"""
     if z == 0:
         return ""
     elif z <= 118:
@@ -883,12 +884,16 @@ class TableData:
     original: pd.DataFrame = field(init=False)
     current: pd.DataFrame = field(init=False)
     selections: dict[str, int] = field(init=False)
+    shown_cols: list[str] = field(init=False)
+    shown_rows: list[str] = field(init=False)
+    original_cols: list[str] = field(init=False)
+    sorted_by: tuple[str, bool] = field(init=False, default=(ID_COL, True))
+    lod_shown: bool = field(init=False, default=True)
 
     def __post_init__(self):
         self.selections = {}
-        self.selected_rows = []
         self.selected_rows_range = (1, -1)
-        self.selected_columns = set(RESULTS_JUNK) | set(RESULT_KEYS_ERR)
+        columns_to_drop = list(set(RESULTS_JUNK) | set(RESULT_KEYS_ERR))
         raw_csv = self._raw_to_csv(self._results_to_array(self._construct()))
         self.original = pd.read_csv(
             raw_csv,
@@ -899,7 +904,10 @@ class TableData:
             na_filter=False,
         )[::-1]
 
-        self.current = self.original.copy()
+        self.current = self.original.drop(columns=columns_to_drop).copy()
+        self.original_cols = self.original.columns.tolist()
+        self.shown_cols = self.current.columns.tolist()
+        self.shown_rows = self.current.iloc[:, 0].tolist()
 
     def _sorter(self, x, y):
         strx = str(x[1])
@@ -986,6 +994,9 @@ class TableData:
         return sio
 
     def toggle_lod(self, state: bool):
+        if state == self.lod_shown:
+            return self.current
+
         if state:
             self.current.update(
                 self.original, overwrite=False, filter_func=lambda x: x == ""
@@ -997,18 +1008,18 @@ class TableData:
 
     def toggle_columns(self, keys: list[str], state: bool):
         if state:
-            current_index = self.current.index
             columns_to_show = self.current.columns.tolist() + keys
-            original_columns = self.original.columns.tolist()
             ordered_intersection = sorted(
-                set(original_columns) & set(columns_to_show),
-                key=original_columns.index,
+                set(self.original_cols) & set(columns_to_show),
+                key=self.original_cols.index,
             )
             self.current = self.original[ordered_intersection].reindex(
-                index=current_index
+                index=self.current.index
             )
         else:
             self.current = self.current.drop(keys, axis=1, errors="ignore")
+
+        self.shown_cols = self.current.columns.tolist()
 
         return self.current
 
@@ -1021,15 +1032,15 @@ class TableData:
         if row_range is None:
             row_range = self.selected_rows_range
         if row_range[1] == -1:
-            filtered = self.current.loc[
-                pd.to_numeric(self.current[ID_COL]) >= row_range[0]
-            ]
+            filtered = self.original.loc[
+                pd.to_numeric(self.original[ID_COL]) >= row_range[0]
+            ][self.shown_cols]
         else:
-            filtered = self.current.loc[
-                pd.to_numeric(self.current[ID_COL]).isin(
+            filtered = self.original.loc[
+                pd.to_numeric(self.original[ID_COL]).isin(
                     range(row_range[0], row_range[1] + 1)
                 )
-            ]
+            ][self.shown_cols]
 
         if not show_empty_cols or not show_empty_rows:
             filtered = filtered.replace("", np.nan)
@@ -1039,20 +1050,26 @@ class TableData:
 
         if not show_empty_rows and show_empty_cols:
             filtered = filtered.dropna(
-                subset=filtered.columns.difference(["File #"]), how="all", axis=0
+                subset=filtered.columns.difference([ID_COL]), how="all", axis=0
             ).fillna("")
 
         if not show_empty_rows and not show_empty_cols:
             filtered = filtered.dropna(
-                subset=filtered.columns.difference(["File #"]), how="all", axis=0
+                subset=filtered.columns.difference([ID_COL]), how="all", axis=0
             )
             filtered = filtered.dropna(how="all", axis=1).fillna("")
 
-        return filtered
+        self.shown_cols = filtered.columns.tolist()
+        self.shown_rows = filtered.iloc[:, 0].tolist()
+
+        self.current = filtered
+        self.sort(*self.sorted_by)
+
+        return self.current
 
     def select_rows_list(self, row_list: list[str] | None):
         if row_list is None:
-            row_list = self.selected_rows
+            row_list = self.shown_rows
         filtered = self.current.loc[self.current[ID_COL].isin(row_list)]
         return filtered
 
@@ -1066,6 +1083,7 @@ class TableData:
         ]
 
         self.current = self.current.iloc[sorted_arr_ids, :]
+        self.sorted_by = (column, reverse)
 
         return self.current
 
@@ -1083,6 +1101,21 @@ class TableData:
             new_df = new_df.replace(["±", "±0.0000"], "")
 
         return new_df
+
+    def normalize_rows(self, df: pd.DataFrame):
+        col_ids = [df.columns.get_loc(c) for c in RESULT_ELEMENTS if c in df]
+        rows = (
+            self.current.iloc[:, col_ids]
+            .replace(["< LOD", ""], 0)
+            .to_numpy()
+            .astype(float)
+        )
+        for i, r in enumerate(rows):
+            normalized = np.interp(r, (r.min(), r.max()), (0.0, 100.0))
+            normalized_str = np.char.mod("%.4f", normalized)
+            df.iloc[:, col_ids] = normalized_str
+
+        return df
 
     def selected_to_clipboard(self):
         selected_rows = self.current[self.current[ID_COL].isin(self.selections)]

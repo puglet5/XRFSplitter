@@ -22,6 +22,7 @@ setuptools = "*"
 ipykernel = "*"
 nuitka = "*"
 memory-profiler = "*"
+typing-extensions = "*"
 
 [requires]
 python_version = "3.11"
