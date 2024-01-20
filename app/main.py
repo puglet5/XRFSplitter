@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+import uuid
 
 import coloredlogs
 import dearpygui.dearpygui as dpg
@@ -222,7 +223,7 @@ def populate_table():
     for i in range(row_n):
         yield (i / row_n)
         dpg.lock_mutex()
-        row_id = dpg.generate_uuid()
+        row_id = uuid.uuid4().int & (1 << 64) - 1
         with dpg.table_row(use_internal_label=False, parent=TABLE, tag=row_id):
             label = arr[i, 0]
             previously_selected = label in selections
