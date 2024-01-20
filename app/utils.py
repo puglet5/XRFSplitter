@@ -6,7 +6,7 @@ import shutil
 import time
 from dataclasses import dataclass, field
 from datetime import datetime as dt
-from functools import partial, wraps
+from functools import cached_property, partial, wraps
 from io import StringIO
 from pathlib import Path
 from struct import unpack
@@ -816,7 +816,8 @@ class PDZFile:
                 if self._read_bytes("h", 2) == 3:
                     self._append_spectrum()
 
-    def generate_plot_data(self):
+    @cached_property
+    def plot_data(self):
         if len(self.spectra) == 3:
             counts = [
                 a + b for a, b in zip(self.spectra[1].counts, self.spectra[2].counts)
@@ -845,16 +846,18 @@ class PlotData:
         self.pca_info = None
         self.pca_shapes = None
         self.pca_data = None
+        self.pca = PCA(n_components=2, svd_solver="full")
 
     def generate_pca_data(self):
         if len(self.pdz_data) < 3:
-            return
+            self.pca_data = None
+            self.pca_info = None
+            self.pca_shapes = None
 
-        counts = [pdz.generate_plot_data()[1] for pdz in self.pdz_data.values()]
+        counts = [pdz.plot_data[1] for pdz in self.pdz_data.values()]
         data = minmax_scale(np.array(counts), feature_range=(0, 1), axis=1)
 
-        pca = PCA(n_components=2, svd_solver="full")
-        pca_data = pca.fit_transform(data)
+        pca_data = self.pca.fit_transform(data)
         x, y = pca_data.T
         pad = (x.max() + y.max() - x.min() - y.min()) ** 0.5
         xmin, xmax = x.min() - pad, x.max() + pad
@@ -867,7 +870,7 @@ class PlotData:
 
         allsegs = plt.contour(xx, yy, f).allsegs
 
-        self.pca_info = pca
+        self.pca_info = self.pca
         self.pca_shapes = allsegs
         self.pca_data = pca_data
 

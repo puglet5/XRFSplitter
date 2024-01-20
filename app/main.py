@@ -265,9 +265,6 @@ def remove_pca_plot():
     dpg.delete_item("pca_plots", children_only=True, slot=0)
     dpg.configure_item("pca_x_axis", label="PC1")
     dpg.configure_item("pca_y_axis", label="PC2")
-    plot_data.pca_data = None
-    plot_data.pca_info = None
-    plot_data.pca_shapes = None
 
 
 def update_pca_plot():
@@ -509,7 +506,7 @@ def add_pdz_plot(path: Path, label: str):
         return
 
     plot_data.pdz_data[label] = pdz
-    x, y = pdz.generate_plot_data()
+    x, y = pdz.plot_data
 
     dpg.add_line_series(
         x,
