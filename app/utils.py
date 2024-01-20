@@ -24,6 +24,7 @@ from matplotlib import pyplot as plt
 
 matplotlib.use("agg")
 plt.ioff()
+pd.set_option("future.no_silent_downcasting", True)
 
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import minmax_scale

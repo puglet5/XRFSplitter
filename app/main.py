@@ -337,7 +337,6 @@ def setup_table(csv_path: Path):
         label="Results",
         parent="table_wrapper",
         tag=TABLE,
-        no_saved_settings=True,
         header_row=True,
         hideable=False,
         resizable=False,
@@ -349,13 +348,13 @@ def setup_table(csv_path: Path):
         sortable=False,
         callback=lambda s, a: sort_callback(s, a),
         delay_search=True,
-        policy=dpg.mvTable_SizingFixedFit,
+        policy=dpg.mvTable_SizingFixedSame,
         borders_outerH=True,
         borders_innerV=True,
         borders_innerH=True,
         borders_outerV=True,
         reorderable=False,
-        precise_widths=True,
+        precise_widths=False,
         height=-1,
         width=-1,
     )
@@ -387,7 +386,7 @@ def unhighlight_table():
     df_n = df.shape[0]
     err = None
     for i in range(df_n):
-        for j in range(df.shape[1]):
+        for j in range(1, df.shape[1]):
             try:
                 dpg.unhighlight_table_cell(TABLE, i, j)
             except Exception as e:
