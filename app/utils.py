@@ -605,6 +605,7 @@ def progress_bar(f):
             dpg.set_value("table_progress", 0)
             return result.value
         except TypeError:
+            dpg.set_value("table_progress", 0)
             return None
 
     return _wrapper
@@ -844,6 +845,9 @@ class PlotData:
     pca_info: PCA | None = field(init=False)
 
     def __post_init__(self):
+        self.clear()
+
+    def clear(self):
         self.pdz_data = {}
         self.pca_info = None
         self.pca_shapes = None

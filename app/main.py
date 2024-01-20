@@ -24,10 +24,7 @@ dpg.configure_app(
 
 TABLE = "results_table"
 WINDOW = "primary_window"
-global pca_plots_last_visible
-pca_plots_last_visible: int = 0
-
-global last_row_selected
+pca_plot_last_visible: int = 0
 last_row_selected: int | str = 0
 
 
@@ -103,6 +100,8 @@ def select_all_rows():
 
     for i, r in enumerate(rows):
         yield (i / rows_n)
+        if dpg.is_key_pressed(dpg.mvKey_Escape):
+            break
         if cells := dpg.get_item_children(r, 1):
             cell = cells[0]
             if not dpg.get_value(cell):
@@ -110,10 +109,11 @@ def select_all_rows():
                 row_select_callback(cell, True, check_keys=False, propagate=False)
 
 
-def pca_plots_is_visible():
-    return dpg.get_frame_count() - pca_plots_last_visible < 10
+def pca_plot_is_visible():
+    return dpg.get_frame_count() - pca_plot_last_visible < 10
 
 
+@progress_bar
 def ctrl_select_rows(row_clicked):
     rows: list[int] = dpg.get_item_children(TABLE, 1)  # type:ignore
     if row_clicked not in rows or last_row_selected not in rows:
@@ -130,7 +130,14 @@ def ctrl_select_rows(row_clicked):
     else:
         select_from, select_to = last_row_i, row_clicked_i
 
-    for r in rows[select_from:select_to]:
+    rows_to_select = rows[select_from:select_to]
+    rows_to_select_n = len(rows_to_select)
+
+    for i, r in enumerate(rows_to_select):
+        yield (i / rows_to_select_n)
+        if dpg.is_key_down(dpg.mvKey_Escape):
+            break
+
         cells: list[int] | None = dpg.get_item_children(r, 1)  # type:ignore
         if cells is None:
             return
@@ -142,7 +149,13 @@ def ctrl_select_rows(row_clicked):
 
 
 @log_exec_time
-def row_select_callback(cell: int, value: bool, check_keys=True, propagate=True):
+def row_select_callback(
+    cell: int,
+    value: bool,
+    check_keys=True,
+    propagate=True,
+    update_plots: Literal["all", "pca", "pdz", "none"] = "all",
+):
     global last_row_selected
     if propagate:
         if check_keys:
@@ -172,19 +185,23 @@ def row_select_callback(cell: int, value: bool, check_keys=True, propagate=True)
             selections[spectrum_label] = cell
             if file is not None:
                 path = Path(f"{plot_data.pdz_folder}/{file}")
-                add_pdz_plot(path, spectrum_label)
-                dpg.bind_item_handler_registry(cell, "row_hover_handler")
-                if len(plot_data.pdz_data) > 3:
-                    if pca_plots_is_visible():
-                        update_pca_plot()
+                if update_plots == "pdz" or update_plots == "all":
+                    add_pdz_plot(path, spectrum_label)
+                if update_plots == "pca" or update_plots == "all":
+                    dpg.bind_item_handler_registry(cell, "row_hover_handler")
+                    if len(plot_data.pdz_data) > 3:
+                        if pca_plot_is_visible():
+                            update_pca_plot()
         else:
             selections.pop(spectrum_label, None)
-            remove_pdz_plot(spectrum_label)
-            if len(plot_data.pdz_data) > 3:
-                if pca_plots_is_visible():
-                    update_pca_plot()
-            else:
-                remove_pca_plot()
+            if update_plots == "pdz" or update_plots == "all":
+                remove_pdz_plot(spectrum_label)
+            if update_plots == "pca" or update_plots == "all":
+                if len(plot_data.pdz_data) > 3:
+                    if pca_plot_is_visible():
+                        update_pca_plot()
+                else:
+                    remove_pca_plot()
 
 
 def prepare_data():
@@ -198,9 +215,28 @@ def prepare_data():
     table_data.toggle_lod(dpg.get_value("lod_checkbox"))
 
 
+def clear_plots():
+    global plot_data
+    plot_data.clear()
+    dpg.delete_item("pca_y_axis", children_only=True)
+    dpg.delete_item("pca_plot", children_only=True, slot=0)
+    dpg.configure_item("pca_x_axis", label="PC1")
+    dpg.configure_item("pca_y_axis", label="PC2")
+    dpg.delete_item("y_axis", children_only=True, slot=1)
+
+
 @log_exec_time
 @progress_bar
 def populate_table():
+    """
+    Populates table `TABLE` with data from global `table_data`.
+
+    Called on sort, row/column selection and '< LOD' toggle.
+
+    Regenerates previously selected rows.
+
+    Rehighlights table if `table_highlight_checkbox` is set.
+    """
     global last_row_selected
 
     prepare_data()
@@ -265,12 +301,15 @@ def deselect_all_rows():
         yield (i / cells_n)
         if dpg.does_item_exist(cell):
             dpg.set_value(cell, False)
-            row_select_callback(cell, False, check_keys=False, propagate=False)
+            row_select_callback(
+                cell, False, check_keys=False, propagate=False, update_plots="none"
+            )
+    clear_plots()
 
 
 def remove_pca_plot():
     dpg.delete_item("pca_y_axis", children_only=True)
-    dpg.delete_item("pca_plots", children_only=True, slot=0)
+    dpg.delete_item("pca_plot", children_only=True, slot=0)
     dpg.configure_item("pca_x_axis", label="PC1")
     dpg.configure_item("pca_y_axis", label="PC2")
 
@@ -278,7 +317,7 @@ def remove_pca_plot():
 def update_pca_plot():
     plot_data.generate_pca_data()
     dpg.delete_item("pca_y_axis", children_only=True)
-    dpg.delete_item("pca_plots", children_only=True, slot=0)
+    dpg.delete_item("pca_plot", children_only=True, slot=0)
 
     if (
         plot_data.pca_shapes is None
@@ -313,7 +352,7 @@ def update_pca_plot():
             default_value=(x, y),
             offset=(-1, 1),
             color=[255, 255, 255, 100],
-            parent="pca_plots",
+            parent="pca_plot",
         )
 
     variance = plot_data.pca_info.explained_variance_ratio_
@@ -401,7 +440,7 @@ def row_hover_callback(_s, row):
     if row_label is None:
         return
 
-    if not (annotations := dpg.get_item_children("pca_plots", 0)):
+    if not (annotations := dpg.get_item_children("pca_plot", 0)):
         return
 
     if len(annotations) < 4:
@@ -425,11 +464,11 @@ def collapsible_clicked_callback(s, a):
     vp_height = dpg.get_viewport_height()
 
     if plots_visible and not table_visible:
-        dpg.configure_item("pca_plots", height=-50)
+        dpg.configure_item("pca_plot", height=-50)
         dpg.configure_item("pdz_plots", height=-50)
 
     if plots_visible and table_visible:
-        dpg.configure_item("pca_plots", height=vp_height // 2)
+        dpg.configure_item("pca_plot", height=vp_height // 2)
         dpg.configure_item("pdz_plots", height=vp_height // 2)
         dpg.configure_item(TABLE, height=-1)
 
@@ -444,11 +483,11 @@ def window_resize_callback(s, a):
     vp_height = dpg.get_viewport_height()
 
     if plots_visible and not table_visible:
-        dpg.configure_item("pca_plots", height=-50)
+        dpg.configure_item("pca_plot", height=-50)
         dpg.configure_item("pdz_plots", height=-50)
 
     if plots_visible and table_visible:
-        dpg.configure_item("pca_plots", height=vp_height // 2)
+        dpg.configure_item("pca_plot", height=vp_height // 2)
         dpg.configure_item("pdz_plots", height=vp_height // 2)
         dpg.configure_item(TABLE, height=-1)
 
@@ -456,17 +495,17 @@ def window_resize_callback(s, a):
         dpg.configure_item(TABLE, height=-1)
 
 
-def pca_plots_visible_callback(s, a):
-    global pca_plots_last_visible
-    if not pca_plots_is_visible():
+def pca_plot_visible_callback(s, a):
+    global pca_plot_last_visible
+    if not pca_plot_is_visible():
         try:
             update_pca_plot()
         except:
             logger.warning("Couldn't update PCA plots")
         finally:
-            pca_plots_last_visible = dpg.get_frame_count()
+            pca_plot_last_visible = dpg.get_frame_count()
 
-    pca_plots_last_visible = dpg.get_frame_count()
+    pca_plot_last_visible = dpg.get_frame_count()
 
 
 with dpg.item_handler_registry(tag="row_hover_handler"):
@@ -478,8 +517,8 @@ with dpg.item_handler_registry(tag="collapsible_clicked_handler"):
 with dpg.item_handler_registry(tag="window_resize_handler"):
     dpg.add_item_resize_handler(callback=window_resize_callback)
 
-with dpg.item_handler_registry(tag="pca_plots_visible_handler"):
-    dpg.add_item_visible_handler(callback=pca_plots_visible_callback)
+with dpg.item_handler_registry(tag="pca_plot_visible_handler"):
+    dpg.add_item_visible_handler(callback=pca_plot_visible_callback)
 
 
 def highlight_table():
@@ -801,7 +840,7 @@ with dpg.window(
                             dpg.add_plot_axis(dpg.mvYAxis, label="Counts", tag="y_axis")
                     with dpg.tab(label="PCA"):
                         with dpg.plot(
-                            tag="pca_plots",
+                            tag="pca_plot",
                             crosshairs=True,
                             anti_aliased=True,
                             height=-50,
@@ -815,10 +854,6 @@ with dpg.window(
                             dpg.add_plot_axis(
                                 dpg.mvYAxis, label="PC1", tag="pca_y_axis"
                             )
-
-                # dpg.add_spacer(height=4)
-                # dpg.add_separator()
-                # dpg.add_spacer(height=4)
 
             with dpg.group(tag="table_wrapper"):
                 dpg.add_progress_bar(tag="table_progress", width=-1, height=10)
@@ -849,11 +884,11 @@ with dpg.window(
                     dpg.add_table_column(label=ID_COL)
 
 dpg.bind_theme(global_theme)
-dpg.bind_item_theme("pca_plots", pca_theme)
+dpg.bind_item_theme("pca_plot", pca_theme)
 dpg.bind_item_handler_registry("table_wrapper", "collapsible_clicked_handler")
 dpg.bind_item_handler_registry("plots_wrapper", "collapsible_clicked_handler")
 dpg.bind_item_handler_registry(WINDOW, "window_resize_handler")
-dpg.bind_item_handler_registry("pca_plots", "pca_plots_visible_handler")
+dpg.bind_item_handler_registry("pca_plot", "pca_plot_visible_handler")
 
 dpg.set_frame_callback(3, setup_dev)
 dpg.setup_dearpygui()
