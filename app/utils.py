@@ -856,7 +856,7 @@ class PlotData:
         pca = PCA(n_components=2, svd_solver="full")
         pca_data = pca.fit_transform(data)
         x, y = pca_data.T
-        pad = x.max() + y.max() - x.min() - y.min()
+        pad = (x.max() + y.max() - x.min() - y.min()) ** 0.5
         xmin, xmax = x.min() - pad, x.max() + pad
         ymin, ymax = y.min() - pad, y.max() + pad
 

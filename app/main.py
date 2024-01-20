@@ -26,6 +26,9 @@ WINDOW = "primary_window"
 global pca_plots_last_visible
 pca_plots_last_visible: int = 0
 
+global last_row_selected
+last_row_selected: int | str = 0
+
 
 def save_init():
     dpg.save_init_file("./dpg.ini")
@@ -100,35 +103,68 @@ def select_all_rows():
             cell = cells[0]
             if not dpg.get_value(cell):
                 dpg.set_value(cell, True)
-                row_select_callback(cell, True)
+                row_select_callback(cell, True, check_keys=False, propagate=False)
 
 
 def pca_plots_is_visible():
     return dpg.get_frame_count() - pca_plots_last_visible < 10
 
 
-@log_exec_time
-def row_select_callback(cell: int, value: bool):
-    spectrum_label = dpg.get_item_label(cell)
+def ctrl_select_rows(row_clicked):
+    rows: list[int] = dpg.get_item_children(TABLE, 1)  # type:ignore
+    if row_clicked not in rows or last_row_selected not in rows:
+        return
 
-    if spectrum_label is None:
+    row_clicked_i = rows.index(row_clicked)
+    last_row_i = rows.index(last_row_selected)
+
+    if last_row_i == row_clicked_i:
+        return
+
+    if last_row_i > row_clicked_i:
+        select_from, select_to = row_clicked_i, last_row_i
+    else:
+        select_from, select_to = last_row_i, row_clicked_i
+
+    for r in rows[select_from:select_to]:
+        cells: list[int] | None = dpg.get_item_children(r, 1)  # type:ignore
+        if cells is None:
+            return
+
+        cell = cells[0]
+        if not dpg.get_value(cell):
+            dpg.set_value(cell, True)
+            row_select_callback(cell, True, False, False)
+
+
+@log_exec_time
+def row_select_callback(cell: int, value: bool, check_keys=True, propagate=True):
+    global last_row_selected
+    if propagate:
+        if check_keys:
+            if not dpg.is_key_down(dpg.mvKey_Shift):
+                deselect_all_rows()
+            if dpg.is_key_down(dpg.mvKey_Control):
+                ctrl_select_rows(dpg.get_item_parent(cell))
+
+        last_row_selected = dpg.get_item_parent(cell) or 0
+
+    if (spectrum_label := dpg.get_item_label(cell)) is None:
         return
 
     selections = table_data.selections
 
-    files = [
-        filename
-        for filename in os.listdir(plot_data.pdz_folder)
-        if filename.endswith(".pdz")
-    ]
-
-    p = re.compile(f"^([0]+){spectrum_label}-")
-
-    files_re = [s for s in files if p.match(s)]
-    file = files_re[0] if files else None
-
     with dpg.mutex():
         if value:
+            files = [
+                filename
+                for filename in os.listdir(plot_data.pdz_folder)
+                if filename.endswith(".pdz")
+            ]
+
+            patt = re.compile(f"^([0]+){spectrum_label}-")
+            files_re = [s for s in files if patt.match(s)]
+            file = files_re[0] if files else None
             selections[spectrum_label] = cell
             if file is not None:
                 path = Path(f"{plot_data.pdz_folder}/{file}")
@@ -139,18 +175,19 @@ def row_select_callback(cell: int, value: bool):
                         update_pca_plot()
         else:
             selections.pop(spectrum_label, None)
-            if file is not None:
-                remove_pdz_plot(spectrum_label)
-                if len(plot_data.pdz_data) > 3:
-                    if pca_plots_is_visible():
-                        update_pca_plot()
-                else:
-                    remove_pca_plot()
+            remove_pdz_plot(spectrum_label)
+            if len(plot_data.pdz_data) > 3:
+                if pca_plots_is_visible():
+                    update_pca_plot()
+            else:
+                remove_pca_plot()
 
 
 @log_exec_time
 @progress_bar
 def populate_table():
+    global last_row_selected
+
     table_data.toggle_columns(RESULTS_JUNK, dpg.get_value("junk_col_checkbox"))
     table_data.toggle_columns(RESULT_KEYS_ERR, dpg.get_value("err_col_checkbox"))
     table_data.selected_rows_range = (dpg.get_value("from"), dpg.get_value("to"))
@@ -185,15 +222,19 @@ def populate_table():
     for i in range(row_n):
         yield (i / row_n)
         dpg.lock_mutex()
-        with dpg.table_row(use_internal_label=False, parent=TABLE):
+        row_id = dpg.generate_uuid()
+        with dpg.table_row(use_internal_label=False, parent=TABLE, tag=row_id):
             label = arr[i, 0]
+            previously_selected = label in selections
             dpg.add_selectable(
                 label=label,
                 span_columns=True,
-                default_value=(label in selections),
+                default_value=previously_selected,
                 callback=lambda s, a: row_select_callback(s, a),
                 tag=selections.get(arr[i, 0], 0),
             )
+            if previously_selected:
+                last_row_selected = row_id
             for j in range(1, arr.shape[1]):
                 dpg.add_selectable(
                     label=arr[i, j],
@@ -216,7 +257,7 @@ def deselect_all_rows():
         yield (i / cells_n)
         if dpg.does_item_exist(cell):
             dpg.set_value(cell, False)
-            row_select_callback(cell, False)
+            row_select_callback(cell, False, check_keys=False, propagate=False)
 
 
 def remove_pca_plot():
@@ -484,7 +525,9 @@ def add_pdz_plot(path: Path, label: str):
 
 def remove_pdz_plot(label: str):
     plot_data.pdz_data.pop(label, None)
-    dpg.delete_item(f"{label}_plot")
+    plot_label = f"{label}_plot"
+    if dpg.does_item_exist(plot_label):
+        dpg.delete_item(plot_label)
 
 
 def pdz_file_dialog_callback(_, app_data: dict[str, str]):
@@ -647,7 +690,7 @@ with dpg.window(
                         label="Show Err columns",
                         default_value=True,
                         tag="err_col_checkbox",
-                        callback=lambda _s, _a: populate_table(),
+                        callback=populate_table,
                         enabled=False,
                         show=False,
                     )
@@ -656,7 +699,7 @@ with dpg.window(
                         label="Show junk columns",
                         default_value=True,
                         tag="junk_col_checkbox",
-                        callback=lambda _s, _a: populate_table(),
+                        callback=populate_table,
                         enabled=False,
                         show=False,
                     )
@@ -665,7 +708,7 @@ with dpg.window(
                         label="Show '< LOD'",
                         default_value=True,
                         tag="lod_checkbox",
-                        callback=lambda _s, _a: populate_table(),
+                        callback=populate_table,
                         enabled=False,
                         show=False,
                     )
@@ -674,7 +717,7 @@ with dpg.window(
                         label="Show empty columns",
                         default_value=True,
                         tag="empty_cols_checkbox",
-                        callback=lambda _s, _a: populate_table(),
+                        callback=populate_table,
                         enabled=False,
                         show=False,
                     )
@@ -683,7 +726,7 @@ with dpg.window(
                         label="Show empty rows",
                         default_value=True,
                         tag="empty_rows_checkbox",
-                        callback=lambda _s, _a: populate_table(),
+                        callback=populate_table,
                         enabled=False,
                         show=False,
                     )
@@ -692,7 +735,7 @@ with dpg.window(
                         label="Highlight table",
                         tag="table_highlight_checkbox",
                         default_value=True,
-                        callback=lambda _s, _a: toggle_highlight_table(),
+                        callback=toggle_highlight_table,
                         show=False,
                     )
 
@@ -708,7 +751,7 @@ with dpg.window(
                             max_clamped=True,
                             default_value=1800,
                             on_enter=True,
-                            callback=lambda _s, _a: populate_table(),
+                            callback=populate_table,
                         )
                         dpg.add_text("to")
                         dpg.add_input_int(
@@ -716,11 +759,11 @@ with dpg.window(
                             width=100,
                             max_value=10000,
                             min_value=-1,
-                            default_value=1820,
+                            default_value=1900,
                             min_clamped=True,
                             max_clamped=True,
                             on_enter=True,
-                            callback=lambda s, _a: populate_table(),
+                            callback=populate_table,
                         )
                         dpg.add_text(
                             "(?)", tag="range_tooltip", color=(200, 200, 200, 100)
@@ -731,12 +774,12 @@ with dpg.window(
 
                     dpg.add_button(
                         label="Select all",
-                        callback=lambda _s, _a: select_all_rows(),
+                        callback=select_all_rows,
                     )
 
                     dpg.add_button(
                         label="Deselect all",
-                        callback=lambda _s, _a: deselect_all_rows(),
+                        callback=deselect_all_rows,
                     )
 
         with dpg.child_window(border=False, width=-1, tag="data"):
