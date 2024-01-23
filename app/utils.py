@@ -566,7 +566,7 @@ def element_z_to_symbol(z: int) -> str:
     elif z <= 118:
         return ELEMENT_SYMBOLS[z - 1]
     else:
-        logging.error("Error: Z out of range")
+        logger.error("Error: Z out of range")
         return "ERR"
 
 
@@ -574,7 +574,7 @@ def element_z_to_name(z):
     if z <= 118:
         return ELEMENT_NAMES[z - 1]
     else:
-        logging.error("Error: Z out of range")
+        logger.error("Error: Z out of range")
         return None
 
 
