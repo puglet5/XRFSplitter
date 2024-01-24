@@ -891,6 +891,7 @@ class TableData:
     selections: dict[str, int] = field(init=False)
     shown_cols: list[str] = field(init=False)
     shown_rows: list[str] = field(init=False)
+    empty_cols: list[str] = field(init=False)
     original_cols: list[str] = field(init=False)
     sorted_by: tuple[str, bool] = field(init=False, default=(ID_COL, True))
     lod_shown: bool = field(init=False, default=True)
@@ -913,6 +914,7 @@ class TableData:
         self.original_cols = self.original.columns.tolist()
         self.shown_cols = self.current.columns.tolist()
         self.shown_rows = self.current.iloc[:, 0].tolist()
+        self.empty_cols = []
 
     def _sorter(self, x, y):
         strx = str(x[1])
@@ -1009,11 +1011,18 @@ class TableData:
         else:
             self.current = self.current.replace("< LOD", "")
 
+        self.lod_shown = state
+
         return self.current
 
-    def toggle_columns(self, keys: list[str], state: bool):
+    def toggle_columns(self, keys: list[str] | Literal["empty"], state: bool):
+        restore_lod = True
         if state:
-            columns_to_show = self.current.columns.tolist() + keys
+            if isinstance(keys, list):
+                columns_to_show = self.shown_cols + keys
+            else:
+                columns_to_show = self.shown_cols + self.empty_cols
+
             ordered_intersection = sorted(
                 set(self.original_cols) & set(columns_to_show),
                 key=self.original_cols.index,
@@ -1022,16 +1031,31 @@ class TableData:
                 index=self.current.index
             )
         else:
-            self.current = self.current.drop(keys, axis=1, errors="ignore")
+            if isinstance(keys, list):
+                self.current = self.current.drop(keys, axis=1, errors="ignore")
+            elif keys == "empty":
+                if self.lod_shown:
+                    self.toggle_lod(False)
+                    restore_lod = False
+
+                filtered = self.current.replace("", np.nan)
+                filtered = filtered.dropna(how="all", axis=1).fillna("")
+
+                if empty_cols := self.current.columns.difference(
+                    filtered.columns
+                ).tolist():
+                    self.empty_cols = empty_cols
+
+                self.current = filtered
 
         self.shown_cols = self.current.columns.tolist()
+        self.toggle_lod(restore_lod)
 
         return self.current
 
     def select_rows_range(
         self,
         row_range: tuple[int, int] | None = None,
-        show_empty_cols: bool = True,
         show_empty_rows: bool = True,
     ):
         if row_range is None:
@@ -1039,30 +1063,20 @@ class TableData:
         if row_range[1] == -1:
             filtered = self.original.loc[
                 pd.to_numeric(self.original[ID_COL]) >= row_range[0]
-            ][self.shown_cols]
+            ]
         else:
             filtered = self.original.loc[
                 pd.to_numeric(self.original[ID_COL]).isin(
                     range(row_range[0], row_range[1] + 1)
                 )
-            ][self.shown_cols]
+            ]
 
-        if not show_empty_cols or not show_empty_rows:
-            filtered = filtered.replace("", np.nan)
-
-        if not show_empty_cols and show_empty_rows:
-            filtered = filtered.dropna(how="all", axis=1).fillna("")
-
-        if not show_empty_rows and show_empty_cols:
-            filtered = filtered.dropna(
-                subset=filtered.columns.difference([ID_COL]), how="all", axis=0
+        if not show_empty_rows:
+            non_empty = filtered.replace("", np.nan)[self.shown_cols]
+            non_empty = non_empty.dropna(
+                subset=non_empty.columns.difference([ID_COL]), how="all", axis=0
             ).fillna("")
-
-        if not show_empty_rows and not show_empty_cols:
-            filtered = filtered.dropna(
-                subset=filtered.columns.difference([ID_COL]), how="all", axis=0
-            )
-            filtered = filtered.dropna(how="all", axis=1).fillna("")
+            filtered = filtered.loc[non_empty[ID_COL].index, :]
 
         self.shown_cols = filtered.columns.tolist()
         self.shown_rows = filtered.iloc[:, 0].tolist()

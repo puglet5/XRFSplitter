@@ -87,9 +87,9 @@ def enable_table_controls():
     dpg.show_item("empty_rows_checkbox")
     dpg.set_value("err_col_checkbox", False)
     dpg.set_value("junk_col_checkbox", False)
-    dpg.set_value("lod_checkbox", True)
-    dpg.set_value("empty_cols_checkbox", True)
-    dpg.set_value("empty_rows_checkbox", True)
+    dpg.set_value("lod_checkbox", False)
+    dpg.set_value("empty_cols_checkbox", False)
+    dpg.set_value("empty_rows_checkbox", False)
 
 
 @log_exec_time
@@ -205,13 +205,13 @@ def row_select_callback(
 
 
 def prepare_data():
-    table_data.toggle_columns(RESULTS_JUNK, dpg.get_value("junk_col_checkbox"))
-    table_data.toggle_columns(RESULT_KEYS_ERR, dpg.get_value("err_col_checkbox"))
     table_data.selected_rows_range = (dpg.get_value("from"), dpg.get_value("to"))
     table_data.select_rows_range(
-        show_empty_cols=bool(dpg.get_value("empty_cols_checkbox")),
         show_empty_rows=bool(dpg.get_value("empty_rows_checkbox")),
     )
+    table_data.toggle_columns(RESULTS_JUNK, dpg.get_value("junk_col_checkbox"))
+    table_data.toggle_columns(RESULT_KEYS_ERR, dpg.get_value("err_col_checkbox"))
+    table_data.toggle_columns("empty", dpg.get_value("empty_cols_checkbox"))
     table_data.toggle_lod(dpg.get_value("lod_checkbox"))
 
 
@@ -410,6 +410,18 @@ def csv_file_dialog_callback(_, app_data: dict):
         return
     selection = list(selections.values())[0]
     setup_table(Path(selection))
+    try:
+        last_row = int(
+            pd.to_numeric(
+                table_data.original.iloc[0, 0], errors="raise", downcast="integer"
+            )
+        )
+    except Exception as e:
+        logger.warn(f"Couldn't get last table row : {e}")
+        return
+
+    dpg.configure_item("from", max_value=last_row)
+    dpg.configure_item("to", max_value=last_row)
 
 
 def toggle_highlight_table():
@@ -582,7 +594,7 @@ def setup_dev():
         "",
         {
             "selections": {
-                "1": "/home/puglet5/Documents/PROJ/XRFSplitter/test/fixtures/Results.csv"
+                "1": "/home/puglet5/Documents/PROJ/XRFSplitter/sandbox/Results.csv"
             }
         },
     )
@@ -744,7 +756,7 @@ with dpg.window(
 
                     dpg.add_checkbox(
                         label="Show '< LOD'",
-                        default_value=True,
+                        default_value=False,
                         tag="lod_checkbox",
                         callback=populate_table,
                         enabled=False,
@@ -753,7 +765,7 @@ with dpg.window(
 
                     dpg.add_checkbox(
                         label="Show empty columns",
-                        default_value=True,
+                        default_value=False,
                         tag="empty_cols_checkbox",
                         callback=populate_table,
                         enabled=False,
@@ -762,7 +774,7 @@ with dpg.window(
 
                     dpg.add_checkbox(
                         label="Show empty rows",
-                        default_value=True,
+                        default_value=False,
                         tag="empty_rows_checkbox",
                         callback=populate_table,
                         enabled=False,
@@ -787,7 +799,7 @@ with dpg.window(
                             min_value=1,
                             min_clamped=True,
                             max_clamped=True,
-                            default_value=1,
+                            default_value=2100,
                             on_enter=True,
                             callback=populate_table,
                         )
