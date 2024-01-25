@@ -213,15 +213,15 @@ class UI:
 
     def highlight_table(self):
         df = self.table_data.current
-        col_ids = [df.columns.get_loc(c) for c in RESULT_ELEMENTS if c in df]
+        col_ids = sorted([df.columns.get_loc(c) for c in RESULT_ELEMENTS if c in df])
         arr = df.iloc[:, col_ids].replace(["< LOD", ""], 0).to_numpy().astype(float)
         for row_i, row in enumerate(arr):
-            t = np.nan_to_num(row / np.max(row), nan=0.0)
+            t = np.nan_to_num(row / np.max(row), nan=0)
             t = np.log(t + 0.01)
-            t = np.interp(t, (t.min(), t.max()), (0.0, 1.0))
+            t = np.interp(t, (t.min(), t.max()), (0, 1))
             for val, column in zip(t, col_ids):
                 sample = dpg.sample_colormap(dpg.mvPlotColormap_Jet, val)
-                norm = [255.0, 255.0, 255.0, min(val * 100.0 + 20.0, 100.0)]
+                norm = [255, 255, 255, min(val * 100 + 20, 100)]
                 color = [int(sample[i] * norm[i]) for i in range(len(sample))]
                 dpg.highlight_table_cell(self.table_tag, row_i, column, color)
 
@@ -331,11 +331,13 @@ class UI:
             self.unhighlight_table()
 
     def unhighlight_table(self):
-        df = self.table_data.current
-        df_n = df.shape[0]
+        table_children = dpg.get_item_children(self.table_tag)
+        print(table_children)
+        cols = table_children.get(0)
+        rows = table_children.get(1)
         err = None
-        for i in range(df_n):
-            for j in range(1, df.shape[1]):
+        for i, row in enumerate(rows):
+            for j, col in enumerate(cols):
                 try:
                     dpg.unhighlight_table_cell(self.table_tag, i, j)
                 except Exception as e:
@@ -389,22 +391,13 @@ class UI:
                 dpg.configure_item(self.window_tag, menubar=(not menubar_visible))
 
     def enable_table_controls(self):
-        dpg.enable_item("err_col_checkbox")
-        dpg.show_item("err_col_checkbox")
-        dpg.enable_item("junk_col_checkbox")
-        dpg.show_item("junk_col_checkbox")
         dpg.enable_item("table_highlight_checkbox")
         dpg.show_item("table_highlight_checkbox")
         dpg.enable_item("lod_checkbox")
         dpg.show_item("lod_checkbox")
-        dpg.enable_item("empty_cols_checkbox")
-        dpg.show_item("empty_cols_checkbox")
         dpg.enable_item("empty_rows_checkbox")
         dpg.show_item("empty_rows_checkbox")
-        dpg.set_value("err_col_checkbox", False)
-        dpg.set_value("junk_col_checkbox", False)
         dpg.set_value("lod_checkbox", False)
-        dpg.set_value("empty_cols_checkbox", False)
         dpg.set_value("empty_rows_checkbox", False)
 
     @log_exec_time
@@ -496,7 +489,7 @@ class UI:
 
                 patt = re.compile(f"^([0]+){spectrum_label}-")
                 files_re = [s for s in files if patt.match(s)]
-                file = files_re[0] if files else None
+                file = files_re[0] if files_re else None
                 selections[spectrum_label] = cell
                 if file is not None:
                     path = Path(self.plot_data.pdz_folder, file)
@@ -529,11 +522,10 @@ class UI:
         self.table_data.select_rows_range(
             show_empty_rows=dpg.get_value("empty_rows_checkbox"),
         )
-        self.table_data.toggle_columns(RESULTS_JUNK, dpg.get_value("junk_col_checkbox"))
-        self.table_data.toggle_columns(
-            RESULT_KEYS_ERR, dpg.get_value("err_col_checkbox")
-        )
-        self.table_data.toggle_columns("empty", dpg.get_value("empty_cols_checkbox"))
+        column_preset: str = dpg.get_value("column_preset_combo")
+        for column, state in COLUMN_PRESETS[column_preset]:
+            self.table_data.toggle_columns(column, state)
+
         self.table_data.toggle_lod(dpg.get_value("lod_checkbox"))
 
     def clear_plots(self):
@@ -604,8 +596,12 @@ class UI:
                             use_internal_label=False,
                         )
 
+            if dpg.get_value("column_preset_combo") == "Info":
+                dpg.disable_item("table_highlight_checkbox")
+            else:
+                dpg.enable_item("table_highlight_checkbox")
             if dpg.get_value("table_highlight_checkbox"):
-                self.highlight_table()
+                self.toggle_highlight_table()
 
     @progress_bar
     def deselect_all_rows(self):
@@ -752,36 +748,9 @@ class UI:
                     with dpg.child_window(width=-1, height=-1):
                         with dpg.group(tag="table_controls", horizontal=False):
                             dpg.add_checkbox(
-                                label="Show Err columns",
-                                default_value=True,
-                                tag="err_col_checkbox",
-                                callback=self.populate_table,
-                                enabled=False,
-                                show=False,
-                            )
-
-                            dpg.add_checkbox(
-                                label="Show junk columns",
-                                default_value=True,
-                                tag="junk_col_checkbox",
-                                callback=self.populate_table,
-                                enabled=False,
-                                show=False,
-                            )
-
-                            dpg.add_checkbox(
                                 label="Show '< LOD'",
                                 default_value=False,
                                 tag="lod_checkbox",
-                                callback=self.populate_table,
-                                enabled=False,
-                                show=False,
-                            )
-
-                            dpg.add_checkbox(
-                                label="Show empty columns",
-                                default_value=False,
-                                tag="empty_cols_checkbox",
                                 callback=self.populate_table,
                                 enabled=False,
                                 show=False,
@@ -802,6 +771,18 @@ class UI:
                                 default_value=True,
                                 callback=self.toggle_highlight_table,
                                 show=False,
+                            )
+
+                            dpg.add_text("Column preset:")
+                            dpg.add_combo(
+                                items=[
+                                    "All elements",
+                                    "Non-empty elements",
+                                    "Info",
+                                ],
+                                default_value="Non-empty elements",
+                                callback=self.populate_table,
+                                tag="column_preset_combo",
                             )
 
                             dpg.add_text("File # range:")

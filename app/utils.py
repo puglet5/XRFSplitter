@@ -507,6 +507,20 @@ ID_COL = "File #"
 T = TypeVar("T")
 P = ParamSpec("P")
 
+COLUMN_PRESETS: dict[str, list[tuple[list[str] | Literal["empty"], bool]]] = {
+    "Info": [(RESULT_ELEMENTS, False), (RESULT_KEYS_ERR, False), (RESULTS_JUNK, True)],
+    "Non-empty elements": [
+        (RESULTS_JUNK, False),
+        (RESULT_KEYS_ERR, False),
+        ("empty", False),
+    ],
+    "All elements": [
+        (RESULTS_JUNK, False),
+        (RESULT_KEYS_ERR, False),
+        ("empty", True),
+    ],
+}
+
 
 def construct_data(filepath: Path):
     with open(filepath, "r") as f:
