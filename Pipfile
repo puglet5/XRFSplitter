@@ -23,6 +23,7 @@ ipykernel = "*"
 nuitka = "*"
 memory-profiler = "*"
 typing-extensions = "*"
+xdg-base-dirs = "*"
 
 [requires]
 python_version = "3.11"

@@ -102,14 +102,19 @@ class UI:
         dpg.bind_theme(self.global_theme)
         dpg.bind_item_theme("pca_plot", self.pca_theme)
 
-    def start(self, dev=True):
-        if dev:
-            dpg.set_frame_callback(3, self.setup_dev)
+    def start(self, dev=False):
         dpg.setup_dearpygui()
         dpg.show_viewport()
         dpg.set_viewport_vsync(True)
         dpg.set_primary_window(self.window_tag, True)
-        dpg.start_dearpygui()
+        try:
+            if dev:
+                dpg.set_frame_callback(3, self.setup_dev)
+            dpg.start_dearpygui()
+        except Exception as e:
+            logger.fatal(e)
+        finally:
+            self.stop()
 
     def stop(self):
         dpg.destroy_context()
