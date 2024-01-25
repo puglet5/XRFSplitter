@@ -14,6 +14,7 @@ from pathlib import Path
 from struct import unpack
 from typing import Any, Callable, Literal, NotRequired, ParamSpec, TypedDict, TypeVar
 
+import coloredlogs
 import dearpygui.dearpygui as dpg
 import matplotlib
 import numpy as np
@@ -21,6 +22,7 @@ import numpy.typing as npt
 import pandas as pd
 import scipy.stats as st
 from matplotlib import pyplot as plt
+from pandas import DataFrame
 
 matplotlib.use("agg")
 plt.ioff()
@@ -30,7 +32,8 @@ from sklearn.decomposition import PCA
 from sklearn.preprocessing import minmax_scale
 
 logger = logging.getLogger(__name__)
-
+logging.basicConfig(filename="./log/main.log", filemode="a")
+coloredlogs.install(level="DEBUG")
 
 Result = TypedDict(
     "Result",
@@ -501,6 +504,8 @@ RESULTS_JUNK = [
 ]
 FMTS = Literal["B", "h", "i", "I", "f", "s", "10", "5"]
 ID_COL = "File #"
+T = TypeVar("T")
+P = ParamSpec("P")
 
 
 def construct_data(filepath: Path):
@@ -576,10 +581,6 @@ def element_z_to_name(z):
     else:
         logger.error("Error: Z out of range")
         return None
-
-
-T = TypeVar("T")
-P = ParamSpec("P")
 
 
 def log_exec_time(f: Callable[P, T]) -> Callable[P, T]:
@@ -864,14 +865,14 @@ class PlotData:
         data = minmax_scale(np.array(counts), feature_range=(0, 1), axis=1)
 
         pca_data = self.pca.fit_transform(data)
-        x, y = pca_data.T
+        x, y, *_ = pca_data.T
         pad = (x.max() + y.max() - x.min() - y.min()) ** 0.5
         xmin, xmax = x.min() - pad, x.max() + pad
         ymin, ymax = y.min() - pad, y.max() + pad
 
         xx, yy = np.mgrid[xmin:xmax:100j, ymin:ymax:100j]
         positions = np.vstack([xx.ravel(), yy.ravel()])
-        kernel = st.gaussian_kde(pca_data.T)
+        kernel = st.gaussian_kde([x, y])
         f = np.reshape(kernel(positions).T, xx.shape)
 
         allsegs = plt.contour(xx, yy, f).allsegs
@@ -886,8 +887,8 @@ class PlotData:
 @dataclass
 class TableData:
     path: str | Path
-    original: pd.DataFrame = field(init=False)
-    current: pd.DataFrame = field(init=False)
+    original: DataFrame = field(init=False)
+    current: DataFrame = field(init=False)
     selections: dict[str, int] = field(init=False)
     shown_cols: list[str] = field(init=False)
     shown_rows: list[str] = field(init=False)
@@ -895,6 +896,7 @@ class TableData:
     original_cols: list[str] = field(init=False)
     sorted_by: tuple[str, bool] = field(init=False, default=(ID_COL, True))
     lod_shown: bool = field(init=False, default=True)
+    last_row: int = field(init=True, default=10000)
 
     def __post_init__(self):
         self.selections = {}
@@ -915,6 +917,9 @@ class TableData:
         self.shown_cols = self.current.columns.tolist()
         self.shown_rows = self.current.iloc[:, 0].tolist()
         self.empty_cols = []
+        self.last_row = int(
+            pd.to_numeric(self.original.iloc[0, 0], errors="raise", downcast="integer")
+        )
 
     def _sorter(self, x, y):
         strx = str(x[1])
@@ -1001,9 +1006,6 @@ class TableData:
         return sio
 
     def toggle_lod(self, state: bool):
-        if state == self.lod_shown:
-            return self.current
-
         if state:
             self.current.update(
                 self.original, overwrite=False, filter_func=lambda x: x == ""
@@ -1015,8 +1017,17 @@ class TableData:
 
         return self.current
 
+    def filter_lod(self, df: DataFrame, state: bool):
+        if state:
+            df.update(self.original, overwrite=False, filter_func=lambda x: x == "")
+        else:
+            df = df.replace("< LOD", "")
+
+        self.lod_shown = state
+
+        return df
+
     def toggle_columns(self, keys: list[str] | Literal["empty"], state: bool):
-        restore_lod = True
         if state:
             if isinstance(keys, list):
                 columns_to_show = self.shown_cols + keys
@@ -1034,12 +1045,12 @@ class TableData:
             if isinstance(keys, list):
                 self.current = self.current.drop(keys, axis=1, errors="ignore")
             elif keys == "empty":
-                if self.lod_shown:
-                    self.toggle_lod(False)
-                    restore_lod = False
-
-                filtered = self.current.replace("", np.nan)
-                filtered = filtered.dropna(how="all", axis=1).fillna("")
+                filtered = (
+                    self.filter_lod(self.current.copy(), False)
+                    .replace("", np.nan)
+                    .dropna(how="all", axis=1)
+                    .fillna("")
+                )
 
                 if empty_cols := self.current.columns.difference(
                     filtered.columns
@@ -1049,7 +1060,6 @@ class TableData:
                 self.current = filtered
 
         self.shown_cols = self.current.columns.tolist()
-        self.toggle_lod(restore_lod)
 
         return self.current
 
@@ -1060,6 +1070,8 @@ class TableData:
     ):
         if row_range is None:
             row_range = self.selected_rows_range
+        if row_range[1] != -1 and row_range[1] < row_range[0]:
+            return self.current
         if row_range[1] == -1:
             filtered = self.original.loc[
                 pd.to_numeric(self.original[ID_COL]) >= row_range[0]
@@ -1107,7 +1119,7 @@ class TableData:
         return self.current
 
     def append_errs(self):
-        new_df = pd.DataFrame()
+        new_df = DataFrame()
 
         err_df = self.original[RESULT_KEYS_ERR].replace("", "0.0000")
 
@@ -1121,7 +1133,7 @@ class TableData:
 
         return new_df
 
-    def normalize_rows(self, df: pd.DataFrame):
+    def normalize_rows(self, df: DataFrame):
         col_ids = [df.columns.get_loc(c) for c in RESULT_ELEMENTS if c in df]
         rows = (
             self.current.iloc[:, col_ids]
