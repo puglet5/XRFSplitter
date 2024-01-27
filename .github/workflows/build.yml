@@ -26,7 +26,7 @@ jobs:
          - uses: Nuitka/Nuitka-Action@main
            with:
               nuitka-version: main
-              script-name: ./app/main.py
+              script-name: ./src/main.py
               onefile: true
 
          - uses: actions/upload-artifact@v3
@@ -34,4 +34,4 @@ jobs:
               path: |
                  build/*.exe
                  build/*.bin
-                 build/*.app/**/*
+                 build/*.src/**/*

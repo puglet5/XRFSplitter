@@ -4,7 +4,6 @@ import csv
 import functools
 import logging
 import os
-import shutil
 import time
 from dataclasses import dataclass, field
 from datetime import datetime as dt
@@ -12,7 +11,7 @@ from functools import cached_property, partial, wraps
 from io import StringIO
 from pathlib import Path
 from struct import unpack
-from typing import Any, Callable, Literal, NotRequired, ParamSpec, TypedDict, TypeVar
+from typing import Any, Callable, Generator, Literal, NotRequired, TypedDict
 
 import coloredlogs
 import dearpygui.dearpygui as dpg
@@ -23,17 +22,16 @@ import pandas as pd
 import scipy.stats as st
 from matplotlib import pyplot as plt
 from pandas import DataFrame
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import minmax_scale
 
 matplotlib.use("agg")
 plt.ioff()
 pd.set_option("future.no_silent_downcasting", True)
-
-from sklearn.decomposition import PCA
-from sklearn.preprocessing import minmax_scale
-
+ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+logging.basicConfig(filename=Path(ROOT_DIR, "log/main.log"), filemode="a")
+coloredlogs.install(level="FATAL")
 logger = logging.getLogger(__name__)
-logging.basicConfig(filename="./log/main.log", filemode="a")
-coloredlogs.install(level="DEBUG")
 
 Result = TypedDict(
     "Result",
@@ -419,7 +417,6 @@ ELEMENT_NAMES = [
     "Oganesson",
 ]
 RESULT_KEYS: list[str] = list(Result.__dict__["__annotations__"].keys())
-RESULT_KEYS_NO_ERR = list(filter(lambda s: " Err" not in s, RESULT_KEYS))
 RESULT_KEYS_ERR = list(filter(lambda s: " Err" in s, RESULT_KEYS))
 RESULT_ELEMENTS = [
     "Pb",
@@ -482,7 +479,7 @@ RESULT_ELEMENTS = [
     "K",
     "Mn",
 ]
-RESULTS_JUNK = [
+RESULTS_INFO = [
     "DateTime",
     "Method",
     "Operator",
@@ -504,92 +501,37 @@ RESULTS_JUNK = [
 ]
 FMTS = Literal["B", "h", "i", "I", "f", "s", "10", "5"]
 ID_COL = "File #"
-T = TypeVar("T")
-P = ParamSpec("P")
 
 COLUMN_PRESETS: dict[str, list[tuple[list[str] | Literal["empty"], bool]]] = {
-    "Info": [(RESULT_ELEMENTS, False), (RESULT_KEYS_ERR, False), (RESULTS_JUNK, True)],
+    "Info": [
+        (RESULT_ELEMENTS, False),
+        (RESULT_KEYS_ERR, False),
+        (RESULTS_INFO, True),
+    ],
     "Non-empty elements": [
-        (RESULTS_JUNK, False),
+        (RESULTS_INFO, False),
         (RESULT_KEYS_ERR, False),
         ("empty", False),
     ],
     "All elements": [
-        (RESULTS_JUNK, False),
+        (RESULTS_INFO, False),
         (RESULT_KEYS_ERR, False),
         ("empty", True),
     ],
 }
 
 
-def construct_data(filepath: Path):
-    with open(filepath, "r") as f:
-        lines_arr = list(
-            csv.reader(f, skipinitialspace=True, delimiter=",", quoting=csv.QUOTE_NONE)
-        )
-
-    header_ids: list[int] = []
-    for i, line in enumerate(lines_arr):
-        if line[0] == ID_COL:
-            header_ids.append(i)
-
-    els_per_header: list[int] = [
-        header_ids[n] - header_ids[n - 1] for n in range(1, len(header_ids))
-    ] + [len(lines_arr) - header_ids[-1]]
-
-    lines_same_header: list[list[list[str]]] = []
-    for i, e in zip(header_ids, els_per_header):
-        lines_same_header.append(lines_arr[i : i + e])
-
-    results_data: Results = {}
-    for lines in lines_same_header:
-        for l in lines[1:]:
-            results_data[l[0]] = dict(zip(lines[0], l))  # type: ignore
-
-    return results_data
-
-
-def select_data(data: Results, data_range: list[int] = [0], keys=RESULT_KEYS):
-    max_data_number = max([int(s) for s in data.keys()]) + 1
-    if data_range[0] is not None and len(data_range) == 1:
-        data_range.append(max_data_number)
-
-    data_selected = [
-        [data.get(str(i), {}).get(k) for k in keys] for i in range(*data_range)
-    ]
-    data_strings: list[list[str]] = [
-        [i or "" for i in res] for res in data_selected if any(res)
-    ]
-
-    return data_strings
-
-
-def data_to_csv(data: list[list[str]], keys=RESULT_KEYS):
-    data.insert(0, keys)
-    sio = StringIO()
-    csv_writer = csv.writer(sio, quotechar="'")
-    csv_writer.writerows(data)
-    sio.seek(0)
-    return sio
-
-
-def write_csv(buf: StringIO, path: Path):
-    with open(path, "w") as f:
-        buf.seek(0)
-        shutil.copyfileobj(buf, f)
-
-
-def element_z_to_symbol(z: int) -> str:
+def element_z_to_symbol(z: int) -> str | None:
     if z == 0:
         return ""
     elif z <= 118:
         return ELEMENT_SYMBOLS[z - 1]
     else:
         logger.error("Error: Z out of range")
-        return "ERR"
+        return None
 
 
-def element_z_to_name(z):
+def element_z_to_name(z) -> str | None:
     if z <= 118:
         return ELEMENT_NAMES[z - 1]
     else:
@@ -597,18 +539,18 @@ def element_z_to_name(z):
         return None
 
 
-def log_exec_time(f: Callable[P, T]) -> Callable[P, T]:
+def log_exec_time(f: Callable):
     @wraps(f)
-    def _wrapper(*args, **kwargs) -> T:
+    def _wrapper(*args, **kwargs):
         start_time = time.perf_counter()
         result = f(*args, **kwargs)
         logger.debug(f"{f.__name__}: {time.perf_counter() - start_time} s.")
         return result
 
-    return _wrapper  # type: ignore
+    return _wrapper
 
 
-def progress_bar(f):
+def progress_bar[T, **P](f: Callable[P, Generator[float, None, None]]):
     @wraps(f)
     def _wrapper(*args, **kwargs):
         progress_generator = f(*args, **kwargs)
@@ -911,11 +853,12 @@ class TableData:
     sorted_by: tuple[str, bool] = field(init=False, default=(ID_COL, True))
     lod_shown: bool = field(init=False, default=True)
     last_row: int = field(init=True, default=10000)
+    first_row: int = field(init=True, default=1)
 
     def __post_init__(self):
         self.selections = {}
         self.selected_rows_range = (1, -1)
-        columns_to_drop = list(set(RESULTS_JUNK) | set(RESULT_KEYS_ERR))
+        columns_to_drop = list(set(RESULTS_INFO) | set(RESULT_KEYS_ERR))
         raw_csv = self._raw_to_csv(self._results_to_array(self._construct()))
         self.original = pd.read_csv(
             raw_csv,
@@ -931,6 +874,9 @@ class TableData:
         self.shown_cols = self.current.columns.tolist()
         self.shown_rows = self.current.iloc[:, 0].tolist()
         self.empty_cols = []
+        self.first_row = int(
+            pd.to_numeric(self.original.iloc[-1, 0], errors="raise", downcast="integer")
+        )
         self.last_row = int(
             pd.to_numeric(self.original.iloc[0, 0], errors="raise", downcast="integer")
         )
@@ -1029,8 +975,6 @@ class TableData:
 
         self.lod_shown = state
 
-        return self.current
-
     def filter_lod(self, df: DataFrame, state: bool):
         if state:
             df.update(self.original, overwrite=False, filter_func=lambda x: x == "")
@@ -1075,17 +1019,14 @@ class TableData:
 
         self.shown_cols = self.current.columns.tolist()
 
-        return self.current
-
     def select_rows_range(
         self,
         row_range: tuple[int, int] | None = None,
-        show_empty_rows: bool = True,
     ):
         if row_range is None:
             row_range = self.selected_rows_range
         if row_range[1] != -1 and row_range[1] < row_range[0]:
-            return self.current
+            return
         if row_range[1] == -1:
             filtered = self.original.loc[
                 pd.to_numeric(self.original[ID_COL]) >= row_range[0]
@@ -1097,20 +1038,24 @@ class TableData:
                 )
             ]
 
-        if not show_empty_rows:
-            non_empty = filtered.replace("", np.nan)[self.shown_cols]
-            non_empty = non_empty.dropna(
-                subset=non_empty.columns.difference([ID_COL]), how="all", axis=0
-            ).fillna("")
-            filtered = filtered.loc[non_empty[ID_COL].index, :]
-
         self.shown_cols = filtered.columns.tolist()
         self.shown_rows = filtered.iloc[:, 0].tolist()
 
         self.current = filtered
         self.sort(*self.sorted_by)
 
-        return self.current
+    def filter_empty_rows(self):
+        if self.current.empty:
+            return
+
+        filtered = self.current
+        non_empty = filtered.replace("", np.nan)[self.shown_cols]
+        non_empty = non_empty.dropna(
+            subset=non_empty.columns.difference([ID_COL]), how="all", axis=0
+        ).fillna("")
+        filtered = filtered.loc[non_empty[ID_COL].index, :]
+
+        self.current = filtered
 
     def select_rows_list(self, row_list: list[str] | None):
         if row_list is None:
@@ -1119,11 +1064,11 @@ class TableData:
         return filtered
 
     def sort(self, column: str, reverse: bool):
-        arr = self.current[column].tolist()
+        col = self.current[column].tolist()
         sorted_arr_ids = [
             b[0]
             for b in sorted(
-                enumerate(arr), key=functools.cmp_to_key(self._sorter), reverse=reverse
+                enumerate(col), key=functools.cmp_to_key(self._sorter), reverse=reverse
             )
         ]
 

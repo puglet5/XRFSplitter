@@ -24,6 +24,7 @@ nuitka = "*"
 memory-profiler = "*"
 typing-extensions = "*"
 xdg-base-dirs = "*"
+pip-licenses = "*"
 
 [requires]
-python_version = "3.11"
+python_version = "3.12"

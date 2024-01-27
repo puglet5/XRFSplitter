@@ -6,7 +6,7 @@
             "type": "process",
             "command": "${command:python.interpreterPath}",
             "args": [
-                "${workspaceFolder}/app/main.py"
+                "${workspaceFolder}/src/main.py"
             ],
             "problemMatcher": [],
             "group": {

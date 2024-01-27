@@ -1,3 +1,4 @@
+import gc
 import re
 import uuid
 
@@ -44,6 +45,11 @@ class UI:
                     category=dpg.mvThemeCat_Core,
                 )
 
+            with dpg.theme_component(dpg.mvCheckbox, enabled_state=False):
+                dpg.add_theme_color(dpg.mvThemeCol_FrameBgHovered, [120, 120, 120, 0])
+                dpg.add_theme_color(dpg.mvThemeCol_FrameBgActive, [120, 120, 120, 0])
+                dpg.add_theme_color(dpg.mvThemeCol_CheckMark, [120, 120, 120])
+
         with dpg.theme() as self.pca_theme:
             with dpg.theme_component(dpg.mvAreaSeries):
                 dpg.add_theme_color(
@@ -53,6 +59,11 @@ class UI:
                 )
 
             with dpg.theme_component(dpg.mvScatterSeries):
+                dpg.add_theme_style(
+                    dpg.mvPlotStyleVar_Marker,
+                    dpg.mvPlotMarker_Cross,
+                    category=dpg.mvThemeCat_Plots,
+                )
                 dpg.add_theme_color(
                     dpg.mvPlotCol_MarkerFill,
                     (255, 255, 255, 255),
@@ -141,7 +152,7 @@ class UI:
             sortable=False,
             callback=lambda s, a: self.sort_callback(s, a),
             delay_search=True,
-            policy=dpg.mvTable_SizingFixedSame,
+            policy=dpg.mvTable_SizingFixedFit,
             borders_outerH=True,
             borders_innerV=True,
             borders_innerH=True,
@@ -178,8 +189,15 @@ class UI:
         file_selection = list(selections.values())[0]
         self.setup_table(Path(file_selection))
 
-        dpg.configure_item("from", max_value=self.table_data.last_row)
-        dpg.configure_item("to", max_value=self.table_data.last_row)
+        dpg.configure_item(
+            "from",
+            min_value=self.table_data.first_row,
+            max_value=self.table_data.last_row,
+        )
+        dpg.configure_item(
+            "to",
+            max_value=self.table_data.last_row,
+        )
 
     def pdz_file_dialog_callback(self, _sender, app_data: dict[str, str]):
         self.plot_data = PlotData(app_data.get("file_path_name", ""))
@@ -213,7 +231,7 @@ class UI:
 
     def highlight_table(self):
         df = self.table_data.current
-        col_ids = sorted([df.columns.get_loc(c) for c in RESULT_ELEMENTS if c in df])
+        col_ids = sorted(df.columns.get_loc(c) for c in RESULT_ELEMENTS if c in df)
         arr = df.iloc[:, col_ids].replace(["< LOD", ""], 0).to_numpy().astype(float)
         for row_i, row in enumerate(arr):
             t = np.nan_to_num(row / np.max(row), nan=0)
@@ -221,8 +239,14 @@ class UI:
             t = np.interp(t, (t.min(), t.max()), (0, 1))
             for val, column in zip(t, col_ids):
                 sample = dpg.sample_colormap(dpg.mvPlotColormap_Jet, val)
-                norm = [255, 255, 255, min(val * 100 + 20, 100)]
-                color = [int(sample[i] * norm[i]) for i in range(len(sample))]
+                color = [
+                    a * b
+                    for a, b in zip(sample, [255, 255, 255, min(val * 100 + 20, 100)])
+                ]
+
+                if color == [0.0, 0.0, 170.0000050663948, 20.0]:
+                    continue
+
                 dpg.highlight_table_cell(self.table_tag, row_i, column, color)
 
     def add_pdz_plot(self, path: Path, label: str):
@@ -255,7 +279,7 @@ class UI:
         if dpg.does_item_exist(plot_label):
             dpg.delete_item(plot_label)
 
-    def row_hover_callback(self, _s, row):
+    def row_hover_callback(self, _sender, row):
         row_label = dpg.get_item_label(row)
         if row_label is None:
             return
@@ -331,10 +355,11 @@ class UI:
             self.unhighlight_table()
 
     def unhighlight_table(self):
-        table_children = dpg.get_item_children(self.table_tag)
-        print(table_children)
-        cols = table_children.get(0)
-        rows = table_children.get(1)
+        table_children: dict | None = dpg.get_item_children(self.table_tag)  # type: ignore
+        if table_children is None:
+            return
+        cols: list[int] = table_children.get(0, [])
+        rows: list[int] = table_children.get(1, [])
         err = None
         for i, row in enumerate(rows):
             for j, col in enumerate(cols):
@@ -363,10 +388,10 @@ class UI:
             return
 
         reverse = sort_specs[0][1] < 0
-        current = self.table_data.current.copy()
+        current = self.table_data.current
         sorted = self.table_data.sort(sort_col_label, reverse)
 
-        if current.equals(sorted):
+        if current[ID_COL].equals(sorted[ID_COL]):
             logger.info(f"Table already sorted: {self.table_data.sorted_by}")
             return
 
@@ -374,7 +399,27 @@ class UI:
 
         self.populate_table()
 
+    def cycle_table_presets(self, direction: Literal["left", "right"]):
+        current_preset = dpg.get_value("column_preset_combo")
+        presets = list(COLUMN_PRESETS.keys())
+        current_preset_index = presets.index(current_preset)
+        if direction == "left":
+            if current_preset_index < len(presets) - 1:
+                dpg.set_value("column_preset_combo", presets[current_preset_index + 1])
+            else:
+                dpg.set_value("column_preset_combo", presets[0])
+        if direction == "right":
+            if current_preset_index > 0:
+                dpg.set_value("column_preset_combo", presets[current_preset_index - 1])
+            else:
+                dpg.set_value("column_preset_combo", presets[-1])
+        self.populate_table()
+
     def on_key_ctrl(self):
+        if dpg.is_key_pressed(dpg.mvKey_Right):
+            self.cycle_table_presets("right")
+        if dpg.is_key_pressed(dpg.mvKey_Left):
+            self.cycle_table_presets("left")
         if dpg.is_key_pressed(dpg.mvKey_Q):
             dpg.stop_dearpygui()
         if dpg.is_key_pressed(dpg.mvKey_C):
@@ -478,6 +523,7 @@ class UI:
             return
 
         selections = self.table_data.selections
+        dpg.bind_item_handler_registry(cell, 0)
 
         with dpg.mutex():
             if value:
@@ -496,7 +542,6 @@ class UI:
                     if update_plots == "pdz" or update_plots == "all":
                         self.add_pdz_plot(path, spectrum_label)
                     if update_plots == "pca" or update_plots == "all":
-                        dpg.bind_item_handler_registry(cell, "row_hover_handler")
                         if len(self.plot_data.pdz_data) > 3:
                             if self.pca_plot_is_visible():
                                 self.update_pca_plot()
@@ -519,14 +564,13 @@ class UI:
             range_to = range_from
 
         self.table_data.selected_rows_range = (range_from, range_to)
-        self.table_data.select_rows_range(
-            show_empty_rows=dpg.get_value("empty_rows_checkbox"),
-        )
+        self.table_data.select_rows_range()
         column_preset: str = dpg.get_value("column_preset_combo")
         for column, state in COLUMN_PRESETS[column_preset]:
             self.table_data.toggle_columns(column, state)
-
         self.table_data.toggle_lod(dpg.get_value("lod_checkbox"))
+        if not dpg.get_value("empty_rows_checkbox"):
+            self.table_data.filter_empty_rows()
 
     def clear_plots(self):
         self.plot_data.clear()
@@ -588,6 +632,7 @@ class UI:
                         callback=lambda s, a: self.row_select_callback(s, a),
                         tag=selections.get(arr[i, 0], 0),
                     )
+                    dpg.bind_item_handler_registry(dpg.last_item(), 0)
 
                     for j in range(1, arr.shape[1]):
                         dpg.add_selectable(
@@ -598,10 +643,11 @@ class UI:
 
             if dpg.get_value("column_preset_combo") == "Info":
                 dpg.disable_item("table_highlight_checkbox")
+                self.unhighlight_table()
             else:
                 dpg.enable_item("table_highlight_checkbox")
-            if dpg.get_value("table_highlight_checkbox"):
-                self.toggle_highlight_table()
+                if dpg.get_value("table_highlight_checkbox"):
+                    self.toggle_highlight_table()
 
     @progress_bar
     def deselect_all_rows(self):
@@ -614,12 +660,14 @@ class UI:
                 dpg.set_value(cell, False)
         self.table_data.selections = {}
         self.clear_plots()
+        gc.collect()
 
     def remove_pca_plot(self):
-        dpg.delete_item("pca_y_axis", children_only=True)
-        dpg.delete_item("pca_plot", children_only=True, slot=0)
-        dpg.configure_item("pca_x_axis", label="PC1")
-        dpg.configure_item("pca_y_axis", label="PC2")
+        if self.plot_data.pca_data is not None:
+            dpg.delete_item("pca_y_axis", children_only=True)
+            dpg.delete_item("pca_plot", children_only=True, slot=0)
+            dpg.configure_item("pca_x_axis", label="PC1")
+            dpg.configure_item("pca_y_axis", label="PC2")
 
     def update_pca_plot(self):
         self.plot_data.generate_pca_data()
@@ -667,6 +715,9 @@ class UI:
 
         dpg.configure_item("pca_x_axis", label=f"PC1 ({variance[0]/sum*100:,.2f}%)")
         dpg.configure_item("pca_y_axis", label=f"PC2 ({variance[1]/sum*100:,.2f}%)")
+
+        for row in self.table_data.selections.values():
+            dpg.bind_item_handler_registry(row, "row_hover_handler")
 
         # dpg.fit_axis_data("pca_x_axis")
         # dpg.fit_axis_data("pca_y_axis")
