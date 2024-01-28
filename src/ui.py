@@ -2,7 +2,12 @@ import gc
 import re
 import uuid
 
+from numpy import short
+
 from utils import *
+
+TOOLTIP_DELAY_SEC = 0.1
+EMPTY_CELL_COLOR = [0.0, 0.0, 170.0000050663948, 20.0]
 
 
 @dataclass
@@ -14,7 +19,7 @@ class UI:
     window_tag: str = field(init=False, default="primary_window")
     pca_plot_last_frame_visible: int = field(init=False, default=0)
     pdz_plot_last_frame_visible: int = field(init=False, default=0)
-    last_row_selected: int | str = field(init=False, default=0)
+    last_row_selected: int = field(init=False, default=0)
     last_idle_frame: int = field(init=False, default=0)
 
     def __post_init__(self):
@@ -87,6 +92,7 @@ class UI:
     def setup_handler_registries(self):
         with dpg.handler_registry():
             dpg.add_key_down_handler(dpg.mvKey_Control, callback=self.on_key_ctrl)
+            dpg.add_key_down_handler(dpg.mvKey_Escape, callback=self.hide_modals)
             # dpg.add_mouse_move_handler(callback=mouse_move_callback)
 
         with dpg.item_handler_registry(tag="row_hover_handler"):
@@ -103,6 +109,10 @@ class UI:
 
         with dpg.item_handler_registry(tag="row_threshold_slider_handler"):
             dpg.add_item_deactivated_after_edit_handler(callback=self.populate_table)
+
+    def hide_modals(self):
+        if dpg.is_item_visible("settings_modal"):
+            dpg.hide_item("settings_modal")
 
     def bind_item_handlers(self):
         dpg.bind_theme(self.global_theme)
@@ -250,7 +260,7 @@ class UI:
                     for a, b in zip(sample, [255, 255, 255, min(val * 100 + 20, 100)])
                 ]
 
-                if color == [0.0, 0.0, 170.0000050663948, 20.0]:
+                if color == EMPTY_CELL_COLOR:
                     continue
 
                 dpg.highlight_table_cell(self.table_tag, row_i, column, color)
@@ -342,6 +352,10 @@ class UI:
         if not plots_visible and table_visible:
             dpg.configure_item(self.table_tag, height=-1)
 
+        if dpg.is_item_visible("settings_modal"):
+            w, h = dpg.get_viewport_width(), dpg.get_viewport_height()
+            dpg.configure_item("settings_modal", pos=[w // 2 - 350, h // 2 - 200])
+
     def pca_plot_visible_callback(self, _sender, _data):
         if not self.pca_plot_is_visible():
             try:
@@ -431,13 +445,22 @@ class UI:
         if dpg.is_key_pressed(dpg.mvKey_C):
             if self.table_data.selections:
                 self.table_data.selected_to_clipboard()
+        if dpg.is_key_pressed(dpg.mvKey_Comma):
+            if not dpg.is_item_visible("settings_modal"):
+                self.show_settings_modal()
+            else:
+                dpg.hide_item("settings_modal")
         if dpg.is_key_down(dpg.mvKey_Shift):
             if dpg.is_key_pressed(dpg.mvKey_A):
                 self.select_all_rows()
             if dpg.is_key_pressed(dpg.mvKey_D):
                 self.deselect_all_rows()
+
         if dpg.is_key_down(dpg.mvKey_Alt):
-            if dpg.is_key_pressed(dpg.mvKey_M):
+            if dpg.is_key_down(dpg.mvKey_Shift):
+                if dpg.is_key_pressed(dpg.mvKey_M):
+                    dpg.show_tool(dpg.mvTool_Metrics)
+            elif dpg.is_key_pressed(dpg.mvKey_M):
                 menubar_visible = dpg.get_item_configuration(self.window_tag)["menubar"]
                 dpg.configure_item(self.window_tag, menubar=(not menubar_visible))
 
@@ -454,12 +477,11 @@ class UI:
         rows: list[int] = dpg.get_item_children(self.table_tag, 1)  # type:ignore
         rows_n = len(rows)
 
-        for i, r in enumerate(rows):
+        for i, row in enumerate(rows):
             yield (i / rows_n)
             if dpg.is_key_pressed(dpg.mvKey_Escape):
                 break
-            if cells := dpg.get_item_children(r, 1):
-                cell = cells[0]
+            if cell := dpg.get_item_user_data(row):
                 if not dpg.get_value(cell):
                     dpg.set_value(cell, True)
                     self.row_select_callback(
@@ -494,11 +516,10 @@ class UI:
             if dpg.is_key_down(dpg.mvKey_Escape):
                 break
 
-            cells: list[int] | None = dpg.get_item_children(r, 1)  # type:ignore
-            if cells is None:
+            cell: int | None = dpg.get_item_user_data(r)
+            if cell is None:
                 return
 
-            cell = cells[0]
             if not dpg.get_value(cell):
                 dpg.set_value(cell, True)
                 self.row_select_callback(cell, True, False, False)
@@ -596,7 +617,7 @@ class UI:
                 self.table_data.normalize_rows()
         if column_preset == "Non-empty elements":
             self.table_data.toggle_columns("empty", False)
-        
+
         if dpg.get_value("fill_with_zeros_checkbox"):
             self.table_data.fill_with_zeros()
 
@@ -652,16 +673,23 @@ class UI:
             for i in range(row_n):
                 yield (i / row_n)
                 row_id = uuid.uuid4().int & (1 << 64) - 1
-                with dpg.table_row(parent=self.table_tag, tag=row_id):
-                    label = arr[i, 0]
-                    if previously_selected := label in selections:
-                        self.last_row_selected = row_id
+                first_cell_label = arr[i, 0]
+                is_previously_selected = first_cell_label in selections
+                if is_previously_selected:
+                    self.last_row_selected = row_id
+                    first_cell_id = selections[first_cell_label]
+                else:
+                    first_cell_id = uuid.uuid4().int & (1 << 64) - 1
+
+                with dpg.table_row(
+                    parent=self.table_tag, tag=row_id, user_data=first_cell_id
+                ):
                     dpg.add_selectable(
-                        label=label,
+                        label=first_cell_label,
                         span_columns=True,
-                        default_value=previously_selected,
+                        default_value=is_previously_selected,
                         callback=lambda s, a: self.row_select_callback(s, a),
-                        tag=selections.get(label, 0),
+                        tag=first_cell_id,
                     )
                     dpg.bind_item_handler_registry(dpg.last_item(), 0)
 
@@ -763,56 +791,62 @@ class UI:
         ):
             with dpg.menu_bar(tag="menu_bar"):
                 with dpg.menu(label="File"):
-                    dpg.add_menu_item(label="Save As")
+                    dpg.add_menu_item(label="Save As", shortcut="(Ctrl+S)")
+                    dpg.add_menu_item(label="Save As", shortcut="(Ctrl+Shift+S)")
 
-                    with dpg.menu(label="Settings"):
-                        dpg.add_menu_item(label="Setting 1", check=True)
-                        dpg.add_menu_item(label="Setting 2")
+                with dpg.menu(label="Edit"):
+                    dpg.add_menu_item(label="To clipboard", shortcut="(Ctrl+C)")
+
+                    dpg.add_menu_item(
+                        label="Preferences",
+                        shortcut="(Ctrl+,)",
+                        callback=self.show_settings_modal,
+                    )
 
                 with dpg.menu(label="Window"):
                     dpg.add_menu_item(
                         label="Wait For Input",
                         check=True,
                         tag="wait_for_input_menu",
+                        shortcut="(Ctrl+Shift+Alt+W)",
                         callback=lambda s, a: dpg.configure_app(wait_for_input=a),
                     )
                     dpg.add_menu_item(
                         label="Toggle Fullscreen",
+                        shortcut="(Win+F)",
                         callback=lambda: dpg.toggle_viewport_fullscreen(),
                     )
                 with dpg.menu(label="Tools"):
-                    dpg.add_menu_item(
-                        label="Show About",
-                        callback=lambda: dpg.show_tool(dpg.mvTool_About),
-                    )
-                    dpg.add_menu_item(
-                        label="Show Metrics",
-                        callback=lambda: dpg.show_tool(dpg.mvTool_Metrics),
-                    )
-                    dpg.add_menu_item(
-                        label="Show Documentation",
-                        callback=lambda: dpg.show_tool(dpg.mvTool_Doc),
-                    )
-                    dpg.add_menu_item(
-                        label="Show Debug",
-                        callback=lambda: dpg.show_tool(dpg.mvTool_Debug),
-                    )
-                    dpg.add_menu_item(
-                        label="Show Style Editor",
-                        callback=lambda: dpg.show_tool(dpg.mvTool_Style),
-                    )
-                    dpg.add_menu_item(
-                        label="Show Font Manager",
-                        callback=lambda: dpg.show_tool(dpg.mvTool_Font),
-                    )
-                    dpg.add_menu_item(
-                        label="Show Item Registry",
-                        callback=lambda: dpg.show_tool(dpg.mvTool_ItemRegistry),
-                    )
-                    dpg.add_menu_item(
-                        label="Show Colormap Registry",
-                        callback=lambda: dpg.show_item("__demo_colormap_registry"),
-                    )
+                    with dpg.menu(label="Developer"):
+                        dpg.add_menu_item(
+                            label="Show About",
+                            callback=lambda: dpg.show_tool(dpg.mvTool_About),
+                        )
+                        dpg.add_menu_item(
+                            label="Show Metrics",
+                            callback=lambda: dpg.show_tool(dpg.mvTool_Metrics),
+                            shortcut="(Ctrl+Alt+M)",
+                        )
+                        dpg.add_menu_item(
+                            label="Show Documentation",
+                            callback=lambda: dpg.show_tool(dpg.mvTool_Doc),
+                        )
+                        dpg.add_menu_item(
+                            label="Show Debug",
+                            callback=lambda: dpg.show_tool(dpg.mvTool_Debug),
+                        )
+                        dpg.add_menu_item(
+                            label="Show Style Editor",
+                            callback=lambda: dpg.show_tool(dpg.mvTool_Style),
+                        )
+                        dpg.add_menu_item(
+                            label="Show Font Manager",
+                            callback=lambda: dpg.show_tool(dpg.mvTool_Font),
+                        )
+                        dpg.add_menu_item(
+                            label="Show Item Registry",
+                            callback=lambda: dpg.show_tool(dpg.mvTool_ItemRegistry),
+                        )
 
             with dpg.group(horizontal=True):
                 with dpg.child_window(border=False, width=350, tag="sidebar"):
@@ -828,14 +862,16 @@ class UI:
                                 callback=lambda: dpg.show_item("csv_dialog"),
                             )
                     dpg.add_progress_bar(tag="table_progress", width=-1, height=19)
-                    with dpg.tooltip("table_progress"):
+                    with dpg.tooltip("table_progress", delay=TOOLTIP_DELAY_SEC):
                         dpg.add_text("Current operation progress")
 
                     with dpg.child_window(width=-1, height=-1):
                         with dpg.group(tag="table_controls", horizontal=False):
                             with dpg.group(horizontal=True):
                                 dpg.add_text("Show '< LOD'".rjust(LABEL_PAD))
-                                with dpg.tooltip(dpg.last_item()):
+                                with dpg.tooltip(
+                                    dpg.last_item(), delay=TOOLTIP_DELAY_SEC
+                                ):
                                     dpg.add_text(
                                         """Shows '< LOD' values in cells
                                             Default: off
@@ -852,7 +888,9 @@ class UI:
 
                             with dpg.group(horizontal=True):
                                 dpg.add_text("Row sum threshold".rjust(LABEL_PAD))
-                                with dpg.tooltip(dpg.last_item()):
+                                with dpg.tooltip(
+                                    dpg.last_item(), delay=TOOLTIP_DELAY_SEC
+                                ):
                                     dpg.add_text(
                                         """Sets threshold to filter valid rows.\nCtrl+LMB to edit directly
                                             Default: 70.0
@@ -871,7 +909,9 @@ class UI:
 
                             with dpg.group(horizontal=True):
                                 dpg.add_text("Highlight table".rjust(LABEL_PAD))
-                                with dpg.tooltip(dpg.last_item()):
+                                with dpg.tooltip(
+                                    dpg.last_item(), delay=TOOLTIP_DELAY_SEC
+                                ):
                                     dpg.add_text(
                                         """Highlights table cells row-wise based on cell's value relative to row's total (normalized, blue to red from lowest to highest value)
                                             Default: on
@@ -886,7 +926,9 @@ class UI:
                                 )
                             with dpg.group(horizontal=True):
                                 dpg.add_text("Fill with zeros".rjust(LABEL_PAD))
-                                with dpg.tooltip(dpg.last_item()):
+                                with dpg.tooltip(
+                                    dpg.last_item(), delay=TOOLTIP_DELAY_SEC
+                                ):
                                     dpg.add_text(
                                         """Fills empty cells with zeros. Doesn't remove '< LOD' values
                                             Default: off
@@ -901,7 +943,9 @@ class UI:
                                 )
                             with dpg.group(horizontal=True):
                                 dpg.add_text("Column preset".rjust(LABEL_PAD))
-                                with dpg.tooltip(dpg.last_item()):
+                                with dpg.tooltip(
+                                    dpg.last_item(), delay=TOOLTIP_DELAY_SEC
+                                ):
                                     dpg.add_text(
                                         """Selects a set of columns to be shown:
                                                          - All elements: show column for every element found in the original table
@@ -928,7 +972,9 @@ class UI:
 
                             with dpg.group(horizontal=True):
                                 dpg.add_text("Row preset".rjust(LABEL_PAD))
-                                with dpg.tooltip(dpg.last_item()):
+                                with dpg.tooltip(
+                                    dpg.last_item(), delay=TOOLTIP_DELAY_SEC
+                                ):
                                     dpg.add_text(
                                         """Selects a set of rows to be shown:
                                                          - All rows: show all rows, no filters
@@ -955,7 +1001,9 @@ class UI:
 
                             with dpg.group(horizontal=True):
                                 dpg.add_text("File range".rjust(LABEL_PAD))
-                                with dpg.tooltip(dpg.last_item()):
+                                with dpg.tooltip(
+                                    dpg.last_item(), delay=TOOLTIP_DELAY_SEC
+                                ):
                                     dpg.add_text(
                                         "Select rows with first column [File #] value within the range",
                                         wrap=400,
@@ -976,7 +1024,9 @@ class UI:
                                         )
                                     with dpg.group(horizontal=True):
                                         dpg.add_text("to".rjust(4))
-                                        with dpg.tooltip(dpg.last_item()):
+                                        with dpg.tooltip(
+                                            dpg.last_item(), delay=TOOLTIP_DELAY_SEC
+                                        ):
                                             dpg.add_text(
                                                 "Value of -1 indicates no upper limit (up to last row)",
                                                 wrap=400,
@@ -1061,3 +1111,189 @@ class UI:
                             width=-1,
                         ):
                             dpg.add_table_column(label=ID_COL)
+
+            with dpg.window(
+                label="Settings",
+                tag="settings_modal",
+                show=False,
+                no_move=True,
+                no_collapse=True,
+                modal=True,
+                width=700,
+                height=400,
+                no_resize=True,
+            ):
+                with dpg.tab_bar():
+                    with dpg.tab(label="General"):
+                        with dpg.child_window(
+                            label="Appearance",
+                            width=-1,
+                            height=-1,
+                            menubar=True,
+                            no_scrollbar=True,
+                        ):
+                            with dpg.menu_bar():
+                                with dpg.menu(label="UI", enabled=False):
+                                    pass
+                            with dpg.group(horizontal=True):
+                                dpg.add_text("Theme")
+                                with dpg.tooltip(
+                                    dpg.last_item(), delay=TOOLTIP_DELAY_SEC
+                                ):
+                                    dpg.add_text(
+                                        """UI theme
+                                                Default: "Dark"
+                                            """,
+                                        wrap=400,
+                                    )
+                                dpg.add_combo(
+                                    items=["Light", "Dark"],
+                                    default_value="Dark",
+                                    width=100,
+                                )
+
+                    with dpg.tab(label="Plots"):
+                        with dpg.child_window(
+                            label="PCA",
+                            width=-1,
+                            height=110,
+                            menubar=True,
+                            no_scrollbar=True,
+                        ):
+                            with dpg.menu_bar():
+                                with dpg.menu(label="PCA", enabled=False):
+                                    pass
+                            with dpg.group(horizontal=True):
+                                dpg.add_text("Minimum selections")
+                                with dpg.tooltip(
+                                    dpg.last_item(), delay=TOOLTIP_DELAY_SEC
+                                ):
+                                    dpg.add_text(
+                                        """Sets minimum number of rows selected to render PCA plot
+                                                Default: 4
+                                            """,
+                                        wrap=400,
+                                    )
+                                dpg.add_input_int(
+                                    width=90,
+                                    default_value=4,
+                                    min_value=4,
+                                    max_value=100,
+                                    min_clamped=True,
+                                    max_clamped=True,
+                                )
+                            with dpg.group(horizontal=True):
+                                dpg.add_text("Axes equal")
+                                with dpg.tooltip(
+                                    dpg.last_item(), delay=TOOLTIP_DELAY_SEC
+                                ):
+                                    dpg.add_text(
+                                        """Sets minimum number of rows selected to render PCA plot
+                                                Default: 4
+                                            """,
+                                        wrap=400,
+                                    )
+                                dpg.add_checkbox()
+                            with dpg.group(horizontal=True):
+                                dpg.add_text("Annotation mode")
+                                with dpg.tooltip(
+                                    dpg.last_item(), delay=TOOLTIP_DELAY_SEC
+                                ):
+                                    dpg.add_text(
+                                        """Sets minimum number of rows selected to render PCA plot
+                                                Default: 4
+                                            """,
+                                        wrap=400,
+                                    )
+                                dpg.add_combo(
+                                    width=100,
+                                    items=["All", "Closest", "None"],
+                                    default_value="All",
+                                )
+                        with dpg.child_window(
+                            label="PDZ",
+                            width=-1,
+                            height=-1,
+                            menubar=True,
+                            no_scrollbar=True,
+                        ):
+                            with dpg.menu_bar():
+                                with dpg.menu(label="PDZ", enabled=False):
+                                    pass
+                            with dpg.group(horizontal=True):
+                                dpg.add_text("Update on select")
+                                with dpg.tooltip(
+                                    dpg.last_item(), delay=TOOLTIP_DELAY_SEC
+                                ):
+                                    dpg.add_text(
+                                        """Sets minimum number of rows selected to render PCA plot
+                                                Default: 4
+                                            """,
+                                        wrap=400,
+                                    )
+                                dpg.add_checkbox()
+
+                    with dpg.tab(label="Table"):
+                        with dpg.child_window(
+                            label="Defaults",
+                            width=-1,
+                            height=120,
+                            menubar=True,
+                            no_scrollbar=True,
+                        ):
+                            with dpg.menu_bar():
+                                with dpg.menu(label="Defaults", enabled=False):
+                                    pass
+
+                        with dpg.child_window(
+                            label="Columns",
+                            width=-1,
+                            height=-1,
+                            menubar=True,
+                            no_scrollbar=True,
+                        ):
+                            with dpg.menu_bar():
+                                with dpg.menu(label="Columns", enabled=False):
+                                    pass
+                            with dpg.group(horizontal=True):
+                                dpg.add_text("Elements".ljust(8))
+                                with dpg.tooltip(
+                                    dpg.last_item(), delay=TOOLTIP_DELAY_SEC
+                                ):
+                                    dpg.add_text(
+                                        """Sets minimum number of rows selected to render PCA plot
+                                                Default: 4
+                                            """,
+                                        wrap=400,
+                                    )
+                                dpg.add_listbox(items=RESULT_ELEMENTS)
+
+                            with dpg.group(horizontal=True):
+                                dpg.add_text("Info".ljust(8))
+                                with dpg.tooltip(
+                                    dpg.last_item(), delay=TOOLTIP_DELAY_SEC
+                                ):
+                                    dpg.add_text(
+                                        """Sets minimum number of rows selected to render PCA plot
+                                                Default: 4
+                                            """,
+                                        wrap=400,
+                                    )
+                                dpg.add_listbox(items=RESULTS_INFO)
+
+                    with dpg.tab(label="Hotkeys"):
+                        with dpg.table():
+                            dpg.add_table_column(label="Action")
+                            dpg.add_table_column(label="Shortcut")
+                            dpg.add_table_row()
+                            dpg.add_table_row()
+                    with dpg.tab(label="Data export"):
+                        dpg.add_text("Export format")
+                        dpg.add_text("Include header")
+                        dpg.add_text("Always fill w/zeroes")
+                        dpg.add_text("Default path")
+
+    def show_settings_modal(self):
+        w, h = dpg.get_viewport_width(), dpg.get_viewport_height()
+        dpg.configure_item("settings_modal", pos=[w // 2 - 350, h // 2 - 200])
+        dpg.show_item("settings_modal")

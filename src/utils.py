@@ -11,7 +11,16 @@ from functools import cached_property, partial, wraps
 from io import StringIO
 from pathlib import Path
 from struct import unpack
-from typing import Any, Callable, Generator, Literal, NotRequired, TypedDict
+from typing import (
+    Any,
+    Callable,
+    Generator,
+    Literal,
+    NotRequired,
+    ParamSpec,
+    TypedDict,
+    TypeVar,
+)
 
 import coloredlogs
 import dearpygui.dearpygui as dpg
@@ -30,7 +39,7 @@ plt.ioff()
 pd.set_option("future.no_silent_downcasting", True)
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 logging.basicConfig(filename=Path(ROOT_DIR, "log/main.log"), filemode="a")
-coloredlogs.install(level="ERROR")
+coloredlogs.install(level="DEBUG")
 logger = logging.getLogger(__name__)
 
 LABEL_PAD = 23
@@ -523,6 +532,9 @@ COLUMN_PRESETS: dict[str, list[tuple[list[str] | Literal["empty"], bool]]] = {
     ],
 }
 
+T = TypeVar("T")
+P = ParamSpec("P")
+
 
 def element_z_to_symbol(z: int) -> str | None:
     if z == 0:
@@ -542,7 +554,7 @@ def element_z_to_name(z) -> str | None:
         return None
 
 
-def log_exec_time[T, **P](f: Callable[P, T]) -> Callable[P, T]:
+def log_exec_time(f: Callable[P, T]) -> Callable[P, T]:
     @wraps(f)
     def _wrapper(*args, **kwargs):
         start_time = time.perf_counter()
@@ -553,9 +565,9 @@ def log_exec_time[T, **P](f: Callable[P, T]) -> Callable[P, T]:
     return _wrapper  # type:ignore
 
 
-def progress_bar[
-    T, **P
-](f: Callable[P, Generator[float, None, None]]) -> Callable[P, T]:  # type:ignore
+def progress_bar(
+    f: Callable[P, Generator[float, None, None]]
+) -> Callable[P, T]:  # type:ignore
     @wraps(f)
     def _wrapper(*args, **kwargs):
         progress_generator = f(*args, **kwargs)
