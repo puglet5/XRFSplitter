@@ -30,8 +30,11 @@ plt.ioff()
 pd.set_option("future.no_silent_downcasting", True)
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 logging.basicConfig(filename=Path(ROOT_DIR, "log/main.log"), filemode="a")
-coloredlogs.install(level="FATAL")
+coloredlogs.install(level="ERROR")
 logger = logging.getLogger(__name__)
+
+LABEL_PAD = 23
+TABLE_SIZE_APPROXIMATION_FACTOR_KB = 15000
 
 Result = TypedDict(
     "Result",
@@ -539,7 +542,7 @@ def element_z_to_name(z) -> str | None:
         return None
 
 
-def log_exec_time(f: Callable):
+def log_exec_time[T, **P](f: Callable[P, T]) -> Callable[P, T]:
     @wraps(f)
     def _wrapper(*args, **kwargs):
         start_time = time.perf_counter()
@@ -547,10 +550,12 @@ def log_exec_time(f: Callable):
         logger.debug(f"{f.__name__}: {time.perf_counter() - start_time} s.")
         return result
 
-    return _wrapper
+    return _wrapper  # type:ignore
 
 
-def progress_bar[T, **P](f: Callable[P, Generator[float, None, None]]):
+def progress_bar[
+    T, **P
+](f: Callable[P, Generator[float, None, None]]) -> Callable[P, T]:  # type:ignore
     @wraps(f)
     def _wrapper(*args, **kwargs):
         progress_generator = f(*args, **kwargs)
@@ -558,14 +563,17 @@ def progress_bar[T, **P](f: Callable[P, Generator[float, None, None]]):
             while True:
                 progress = next(progress_generator)
                 dpg.set_value("table_progress", progress)
+                dpg.configure_item("table_progress", overlay=f"{progress*100:.0f}%")
         except StopIteration as result:
             dpg.set_value("table_progress", 0)
+            dpg.configure_item("table_progress", overlay="")
             return result.value
         except TypeError:
             dpg.set_value("table_progress", 0)
+            dpg.configure_item("table_progress", overlay="")
             return None
 
-    return _wrapper
+    return _wrapper  # type:ignore
 
 
 @dataclass
@@ -867,7 +875,7 @@ class TableData:
             header=0,
             index_col=False,
             na_filter=False,
-        )[::-1]
+        )[::-1].replace(["0.0000"], "")
 
         self.current = self.original.drop(columns=columns_to_drop).copy()
         self.original_cols = self.original.columns.tolist()
@@ -1015,7 +1023,7 @@ class TableData:
                 ).tolist():
                     self.empty_cols = empty_cols
 
-                self.current = filtered
+                self.current = self.current.drop(empty_cols, axis=1)
 
         self.shown_cols = self.current.columns.tolist()
 
@@ -1057,6 +1065,26 @@ class TableData:
 
         self.current = filtered
 
+    def filter_invalid_rows(self, threshold: float):
+        df = (
+            self.current[self.current.columns.intersection(RESULT_ELEMENTS)]
+            .replace(["", "< LOD"], "0.0000")
+            .astype(float)
+        )
+        mask = df.sum(axis=1) > threshold
+        self.current = self.current[mask]
+
+    def normalize_rows(self):
+        elements = self.current.columns.intersection(RESULT_ELEMENTS)
+        df = self.current[elements].replace(["", "< LOD"], "0.0000").astype(float)
+        row_total = df.sum(axis=1) / 100
+        normalized = df.div(row_total, axis=0)
+        normalized = normalized.map("{:,.4f}".format)
+        normalized.update(
+            self.current, filter_func=lambda x: x == "0.0000", overwrite=False
+        )
+        self.current[elements] = normalized
+
     def select_rows_list(self, row_list: list[str] | None):
         if row_list is None:
             row_list = self.shown_rows
@@ -1092,21 +1120,9 @@ class TableData:
 
         return new_df
 
-    def normalize_rows(self, df: DataFrame):
-        col_ids = [df.columns.get_loc(c) for c in RESULT_ELEMENTS if c in df]
-        rows = (
-            self.current.iloc[:, col_ids]
-            .replace(["< LOD", ""], 0)
-            .to_numpy()
-            .astype(float)
-        )
-        for i, r in enumerate(rows):
-            normalized = np.interp(r, (r.min(), r.max()), (0.0, 100.0))
-            normalized_str = np.char.mod("%.4f", normalized)
-            df.iloc[:, col_ids] = normalized_str
-
-        return df
-
     def selected_to_clipboard(self):
         selected_rows = self.current[self.current[ID_COL].isin(self.selections)]
         selected_rows.to_clipboard(excel=True, index=False)
+
+    def fill_with_zeros(self):
+        self.current = self.current.replace("", "0.0000")

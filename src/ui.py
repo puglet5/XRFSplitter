@@ -101,6 +101,9 @@ class UI:
         with dpg.item_handler_registry(tag="pca_plot_visible_handler"):
             dpg.add_item_visible_handler(callback=self.pca_plot_visible_callback)
 
+        with dpg.item_handler_registry(tag="row_threshold_slider_handler"):
+            dpg.add_item_deactivated_after_edit_handler(callback=self.populate_table)
+
     def bind_item_handlers(self):
         dpg.bind_theme(self.global_theme)
         dpg.bind_item_theme("pca_plot", self.pca_theme)
@@ -108,6 +111,9 @@ class UI:
         dpg.bind_item_handler_registry("plots_wrapper", "collapsible_clicked_handler")
         dpg.bind_item_handler_registry(self.window_tag, "window_resize_handler")
         dpg.bind_item_handler_registry("pca_plot", "pca_plot_visible_handler")
+        dpg.bind_item_handler_registry(
+            "row_threshold_slider", "row_threshold_slider_handler"
+        )
 
     def bind_themes(self):
         dpg.bind_theme(self.global_theme)
@@ -397,7 +403,7 @@ class UI:
 
         self.table_data.sorted_by = (sort_col_label, reverse)
 
-        self.populate_table()
+        self.populate_table(skip_equals_check=True)
 
     def cycle_table_presets(self, direction: Literal["left", "right"]):
         current_preset = dpg.get_value("column_preset_combo")
@@ -440,10 +446,7 @@ class UI:
         dpg.show_item("table_highlight_checkbox")
         dpg.enable_item("lod_checkbox")
         dpg.show_item("lod_checkbox")
-        dpg.enable_item("empty_rows_checkbox")
-        dpg.show_item("empty_rows_checkbox")
         dpg.set_value("lod_checkbox", False)
-        dpg.set_value("empty_rows_checkbox", False)
 
     @log_exec_time
     @progress_bar
@@ -556,6 +559,7 @@ class UI:
                     else:
                         self.remove_pca_plot()
 
+    @log_exec_time
     def prepare_data(self):
         range_from = dpg.get_value("from")
         range_to = dpg.get_value("to")
@@ -565,12 +569,36 @@ class UI:
 
         self.table_data.selected_rows_range = (range_from, range_to)
         self.table_data.select_rows_range()
+
         column_preset: str = dpg.get_value("column_preset_combo")
         for column, state in COLUMN_PRESETS[column_preset]:
             self.table_data.toggle_columns(column, state)
+
         self.table_data.toggle_lod(dpg.get_value("lod_checkbox"))
-        if not dpg.get_value("empty_rows_checkbox"):
+
+        row_preset: str = dpg.get_value("row_preset_combo")
+        if row_preset == "All rows":
+            ...
+        if row_preset == "Non-empty rows":
             self.table_data.filter_empty_rows()
+        if row_preset == "Valid rows":
+            self.table_data.filter_empty_rows()
+            if not column_preset == "Info":
+                self.table_data.filter_invalid_rows(
+                    dpg.get_value("row_threshold_slider")
+                )
+        if row_preset == "Valid rows, normalized":
+            self.table_data.filter_empty_rows()
+            if not column_preset == "Info":
+                self.table_data.filter_invalid_rows(
+                    dpg.get_value("row_threshold_slider")
+                )
+                self.table_data.normalize_rows()
+        if column_preset == "Non-empty elements":
+            self.table_data.toggle_columns("empty", False)
+        
+        if dpg.get_value("fill_with_zeros_checkbox"):
+            self.table_data.fill_with_zeros()
 
     def clear_plots(self):
         self.plot_data.clear()
@@ -582,7 +610,7 @@ class UI:
 
     @log_exec_time
     @progress_bar
-    def populate_table(self):
+    def populate_table(self, skip_equals_check=False):
         """
         Populates table `self.table_tag` with data from global `table_data`.
 
@@ -592,7 +620,12 @@ class UI:
 
         Rehighlights table if `table_highlight_checkbox` is set.
         """
-        self.prepare_data()
+
+        if not skip_equals_check:
+            pre = self.table_data.current.copy()
+            self.prepare_data()
+            if self.table_data.current.equals(pre):
+                return
 
         with dpg.mutex():
             if dpg.get_value("table_highlight_checkbox"):
@@ -619,9 +652,7 @@ class UI:
             for i in range(row_n):
                 yield (i / row_n)
                 row_id = uuid.uuid4().int & (1 << 64) - 1
-                with dpg.table_row(
-                    use_internal_label=False, parent=self.table_tag, tag=row_id
-                ):
+                with dpg.table_row(parent=self.table_tag, tag=row_id):
                     label = arr[i, 0]
                     if previously_selected := label in selections:
                         self.last_row_selected = row_id
@@ -630,16 +661,12 @@ class UI:
                         span_columns=True,
                         default_value=previously_selected,
                         callback=lambda s, a: self.row_select_callback(s, a),
-                        tag=selections.get(arr[i, 0], 0),
+                        tag=selections.get(label, 0),
                     )
                     dpg.bind_item_handler_registry(dpg.last_item(), 0)
 
                     for j in range(1, arr.shape[1]):
-                        dpg.add_selectable(
-                            label=arr[i, j],
-                            disable_popup_close=True,
-                            use_internal_label=False,
-                        )
+                        dpg.add_selectable(label=arr[i, j])
 
             if dpg.get_value("column_preset_combo") == "Info":
                 dpg.disable_item("table_highlight_checkbox")
@@ -648,6 +675,11 @@ class UI:
                 dpg.enable_item("table_highlight_checkbox")
                 if dpg.get_value("table_highlight_checkbox"):
                     self.toggle_highlight_table()
+
+            dpg.set_value(
+                "table_dimensions",
+                f"{self.table_data.current.shape}, apx. {self.table_data.current.memory_usage(index=True, deep=True).sum()/TABLE_SIZE_APPROXIMATION_FACTOR_KB:.0f} kB",
+            )
 
     @progress_bar
     def deselect_all_rows(self):
@@ -784,7 +816,7 @@ class UI:
 
             with dpg.group(horizontal=True):
                 with dpg.child_window(border=False, width=350, tag="sidebar"):
-                    with dpg.child_window(width=-1, height=60):
+                    with dpg.child_window(width=-1, height=60, show=False):
                         with dpg.group(horizontal=True):
                             dpg.add_button(
                                 label="Select spectra folder",
@@ -795,91 +827,176 @@ class UI:
                                 label="Select results table",
                                 callback=lambda: dpg.show_item("csv_dialog"),
                             )
+                    dpg.add_progress_bar(tag="table_progress", width=-1, height=19)
+                    with dpg.tooltip("table_progress"):
+                        dpg.add_text("Current operation progress")
 
                     with dpg.child_window(width=-1, height=-1):
                         with dpg.group(tag="table_controls", horizontal=False):
-                            dpg.add_checkbox(
-                                label="Show '< LOD'",
-                                default_value=False,
-                                tag="lod_checkbox",
-                                callback=self.populate_table,
-                                enabled=False,
-                                show=False,
-                            )
-
-                            dpg.add_checkbox(
-                                label="Show empty rows",
-                                default_value=False,
-                                tag="empty_rows_checkbox",
-                                callback=self.populate_table,
-                                enabled=False,
-                                show=False,
-                            )
-
-                            dpg.add_checkbox(
-                                label="Highlight table",
-                                tag="table_highlight_checkbox",
-                                default_value=True,
-                                callback=self.toggle_highlight_table,
-                                show=False,
-                            )
-
-                            dpg.add_text("Column preset:")
-                            dpg.add_combo(
-                                items=[
-                                    "All elements",
-                                    "Non-empty elements",
-                                    "Info",
-                                ],
-                                default_value="Non-empty elements",
-                                callback=self.populate_table,
-                                tag="column_preset_combo",
-                            )
-
-                            dpg.add_text("File # range:")
                             with dpg.group(horizontal=True):
-                                dpg.add_text("From")
-                                dpg.add_input_int(
-                                    tag="from",
-                                    width=100,
-                                    max_value=10000,
-                                    min_value=1,
-                                    min_clamped=True,
-                                    max_clamped=True,
-                                    default_value=2100,
-                                    on_enter=True,
+                                dpg.add_text("Show '< LOD'".rjust(LABEL_PAD))
+                                with dpg.tooltip(dpg.last_item()):
+                                    dpg.add_text(
+                                        """Shows '< LOD' values in cells
+                                            Default: off
+                                        """,
+                                        wrap=400,
+                                    )
+                                dpg.add_checkbox(
+                                    default_value=False,
+                                    tag="lod_checkbox",
                                     callback=self.populate_table,
+                                    enabled=False,
+                                    show=False,
                                 )
-                                dpg.add_text("to")
-                                dpg.add_input_int(
-                                    tag="to",
-                                    width=100,
-                                    max_value=10000,
-                                    min_value=-1,
-                                    default_value=-1,
-                                    min_clamped=True,
-                                    max_clamped=True,
-                                    on_enter=True,
+
+                            with dpg.group(horizontal=True):
+                                dpg.add_text("Row sum threshold".rjust(LABEL_PAD))
+                                with dpg.tooltip(dpg.last_item()):
+                                    dpg.add_text(
+                                        """Sets threshold to filter valid rows.\nCtrl+LMB to edit directly
+                                            Default: 70.0
+                                        """,
+                                        wrap=400,
+                                    )
+                                dpg.add_slider_float(
+                                    width=-1,
+                                    min_value=0,
+                                    max_value=99,
+                                    default_value=70,
+                                    format="%.1f",
+                                    clamped=True,
+                                    tag="row_threshold_slider",
+                                )
+
+                            with dpg.group(horizontal=True):
+                                dpg.add_text("Highlight table".rjust(LABEL_PAD))
+                                with dpg.tooltip(dpg.last_item()):
+                                    dpg.add_text(
+                                        """Highlights table cells row-wise based on cell's value relative to row's total (normalized, blue to red from lowest to highest value)
+                                            Default: on
+                                        """,
+                                        wrap=400,
+                                    )
+                                dpg.add_checkbox(
+                                    tag="table_highlight_checkbox",
+                                    default_value=True,
+                                    callback=self.toggle_highlight_table,
+                                    show=False,
+                                )
+                            with dpg.group(horizontal=True):
+                                dpg.add_text("Fill with zeros".rjust(LABEL_PAD))
+                                with dpg.tooltip(dpg.last_item()):
+                                    dpg.add_text(
+                                        """Fills empty cells with zeros. Doesn't remove '< LOD' values
+                                            Default: off
+                                        """,
+                                        wrap=400,
+                                    )
+                                dpg.add_checkbox(
+                                    tag="fill_with_zeros_checkbox",
+                                    default_value=False,
                                     callback=self.populate_table,
+                                    show=True,
                                 )
+                            with dpg.group(horizontal=True):
+                                dpg.add_text("Column preset".rjust(LABEL_PAD))
+                                with dpg.tooltip(dpg.last_item()):
+                                    dpg.add_text(
+                                        """Selects a set of columns to be shown:
+                                                         - All elements: show column for every element found in the original table
+                                                         - Non-empty elements: only show columns for elements with at least one value (not zero, empty or '< LOD') in selected rows
+                                                         - Info: show columns with data acquisition information. Empty columns are always shown
+                                                        
+                                                        Columns with error estimates are not included in the table
+                                                        
+                                                            Default: Non-empty elements
+                                                        """,
+                                        wrap=400,
+                                    )
+                                dpg.add_combo(
+                                    width=-1,
+                                    items=[
+                                        "All elements",
+                                        "Non-empty elements",
+                                        "Info",
+                                    ],
+                                    default_value="Non-empty elements",
+                                    callback=self.populate_table,
+                                    tag="column_preset_combo",
+                                )
+
+                            with dpg.group(horizontal=True):
+                                dpg.add_text("Row preset".rjust(LABEL_PAD))
+                                with dpg.tooltip(dpg.last_item()):
+                                    dpg.add_text(
+                                        """Selects a set of rows to be shown:
+                                                         - All rows: show all rows, no filters
+                                                         - Non-empty rows: only show rows with at least value in selected columns
+                                                         - Valid rows: show rows, sums of which pass threshold. Max is 100
+                                                         - Valid rows, normalized: show valid rows with values normalized to total
+                                                        
+                                                            Default: Valid rows
+                                                        """,
+                                        wrap=400,
+                                    )
+                                dpg.add_combo(
+                                    width=-1,
+                                    items=[
+                                        "All rows",
+                                        "Non-empty rows",
+                                        "Valid rows",
+                                        "Valid rows, normalized",
+                                    ],
+                                    default_value="Valid rows, normalized",
+                                    callback=self.populate_table,
+                                    tag="row_preset_combo",
+                                )
+
+                            with dpg.group(horizontal=True):
+                                dpg.add_text("File range".rjust(LABEL_PAD))
+                                with dpg.tooltip(dpg.last_item()):
+                                    dpg.add_text(
+                                        "Select rows with first column [File #] value within the range",
+                                        wrap=400,
+                                    )
+                                with dpg.group(horizontal=False):
+                                    with dpg.group(horizontal=True):
+                                        dpg.add_text("from".rjust(4))
+                                        dpg.add_input_int(
+                                            tag="from",
+                                            width=-1,
+                                            max_value=10000,
+                                            min_value=1,
+                                            min_clamped=True,
+                                            max_clamped=True,
+                                            default_value=2100,
+                                            on_enter=True,
+                                            callback=self.populate_table,
+                                        )
+                                    with dpg.group(horizontal=True):
+                                        dpg.add_text("to".rjust(4))
+                                        with dpg.tooltip(dpg.last_item()):
+                                            dpg.add_text(
+                                                "Value of -1 indicates no upper limit (up to last row)",
+                                                wrap=400,
+                                            )
+                                        dpg.add_input_int(
+                                            tag="to",
+                                            width=-1,
+                                            max_value=10000,
+                                            min_value=-1,
+                                            default_value=-1,
+                                            min_clamped=True,
+                                            max_clamped=True,
+                                            on_enter=True,
+                                            callback=self.populate_table,
+                                        )
+                            with dpg.group(horizontal=True):
+                                dpg.add_text("Table dimensions".rjust(LABEL_PAD))
                                 dpg.add_text(
-                                    "(?)",
-                                    tag="range_tooltip",
-                                    color=(200, 200, 200, 100),
+                                    default_value="(0, 0)", tag="table_dimensions"
                                 )
-
-                                with dpg.tooltip("range_tooltip"):
-                                    dpg.add_text("-1 indicates no upper limit")
-
-                            dpg.add_button(
-                                label="Select all",
-                                callback=self.select_all_rows,
-                            )
-
-                            dpg.add_button(
-                                label="Deselect all",
-                                callback=self.deselect_all_rows,
-                            )
 
                 with dpg.child_window(border=False, width=-1, tag="data"):
                     with dpg.collapsing_header(
@@ -919,7 +1036,6 @@ class UI:
                                     )
 
                     with dpg.group(tag="table_wrapper"):
-                        dpg.add_progress_bar(tag="table_progress", width=-1, height=10)
                         with dpg.table(
                             label="Results table",
                             tag=self.table_tag,
