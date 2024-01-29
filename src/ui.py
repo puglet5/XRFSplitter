@@ -136,7 +136,7 @@ class UI:
         dpg.set_primary_window(self.window_tag, True)
         try:
             if dev:
-                dpg.set_frame_callback(3, self.setup_dev)
+                dpg.set_frame_callback(1, self.setup_dev)
             dpg.start_dearpygui()
         except Exception as e:
             logger.fatal(e)
@@ -1151,7 +1151,6 @@ class UI:
                                     default_value="Dark",
                                     width=100,
                                 )
-
                     with dpg.tab(label="Plots"):
                         with dpg.child_window(
                             label="PCA",
@@ -1164,7 +1163,7 @@ class UI:
                                 with dpg.menu(label="PCA", enabled=False):
                                     pass
                             with dpg.group(horizontal=True):
-                                dpg.add_text("Minimum selections")
+                                dpg.add_text("Minimum selections".ljust(28))
                                 with dpg.tooltip(
                                     dpg.last_item(), delay=TOOLTIP_DELAY_SEC
                                 ):
@@ -1183,7 +1182,7 @@ class UI:
                                     max_clamped=True,
                                 )
                             with dpg.group(horizontal=True):
-                                dpg.add_text("Axes equal")
+                                dpg.add_text("Axes ratios equal".ljust(28))
                                 with dpg.tooltip(
                                     dpg.last_item(), delay=TOOLTIP_DELAY_SEC
                                 ):
@@ -1195,7 +1194,7 @@ class UI:
                                     )
                                 dpg.add_checkbox()
                             with dpg.group(horizontal=True):
-                                dpg.add_text("Annotation mode")
+                                dpg.add_text("Annotation mode".ljust(28))
                                 with dpg.tooltip(
                                     dpg.last_item(), delay=TOOLTIP_DELAY_SEC
                                 ):
@@ -1221,7 +1220,7 @@ class UI:
                                 with dpg.menu(label="PDZ", enabled=False):
                                     pass
                             with dpg.group(horizontal=True):
-                                dpg.add_text("Update on select")
+                                dpg.add_text("Update on select".ljust(28))
                                 with dpg.tooltip(
                                     dpg.last_item(), delay=TOOLTIP_DELAY_SEC
                                 ):
@@ -1232,7 +1231,25 @@ class UI:
                                         wrap=400,
                                     )
                                 dpg.add_checkbox()
-
+                            with dpg.group(horizontal=True):
+                                dpg.add_text("Maximum plots shown".ljust(28))
+                                with dpg.tooltip(
+                                    dpg.last_item(), delay=TOOLTIP_DELAY_SEC
+                                ):
+                                    dpg.add_text(
+                                        """Sets minimum number of rows selected to render PCA plot
+                                                Default: 4
+                                            """,
+                                        wrap=400,
+                                    )
+                                dpg.add_input_int(
+                                    width=90,
+                                    default_value=10,
+                                    min_value=2,
+                                    max_value=100,
+                                    min_clamped=True,
+                                    max_clamped=True,
+                                )
                     with dpg.tab(label="Table"):
                         with dpg.child_window(
                             label="Defaults",
@@ -1287,11 +1304,114 @@ class UI:
                             dpg.add_table_column(label="Shortcut")
                             dpg.add_table_row()
                             dpg.add_table_row()
-                    with dpg.tab(label="Data export"):
-                        dpg.add_text("Export format")
-                        dpg.add_text("Include header")
-                        dpg.add_text("Always fill w/zeroes")
-                        dpg.add_text("Default path")
+                    with dpg.tab(label="Import/Export"):
+                        with dpg.child_window(
+                            label="USB",
+                            width=-1,
+                            height=140,
+                            menubar=True,
+                            no_scrollbar=True,
+                        ):
+                            with dpg.menu_bar():
+                                with dpg.menu(label="USB", enabled=False):
+                                    pass
+                            with dpg.group(horizontal=True):
+                                dpg.add_text("Connect automatically".ljust(28))
+                                with dpg.tooltip(
+                                    dpg.last_item(), delay=TOOLTIP_DELAY_SEC
+                                ):
+                                    dpg.add_text(
+                                        "",
+                                        wrap=400,
+                                    )
+                                dpg.add_checkbox(default_value=True)
+                            with dpg.group(horizontal=True):
+                                dpg.add_text("Use default file structure".ljust(28))
+                                with dpg.tooltip(
+                                    dpg.last_item(), delay=TOOLTIP_DELAY_SEC
+                                ):
+                                    dpg.add_text(
+                                        "",
+                                        wrap=400,
+                                    )
+                                dpg.add_checkbox(default_value=True)
+                            with dpg.group(horizontal=True):
+                                dpg.add_text(".pdz folder name".ljust(28))
+                                with dpg.tooltip(
+                                    dpg.last_item(), delay=TOOLTIP_DELAY_SEC
+                                ):
+                                    dpg.add_text(
+                                        "",
+                                        wrap=400,
+                                    )
+                                dpg.add_input_text(default_value="DATA", width=200)
+                            with dpg.group(horizontal=True):
+                                dpg.add_text("Results table name".ljust(28))
+                                with dpg.tooltip(
+                                    dpg.last_item(), delay=TOOLTIP_DELAY_SEC
+                                ):
+                                    dpg.add_text(
+                                        "",
+                                        wrap=400,
+                                    )
+                                dpg.add_input_text(
+                                    default_value="Results.csv", width=200
+                                )
+
+                        with dpg.child_window(
+                            label="Export",
+                            width=-1,
+                            height=-1,
+                            menubar=True,
+                            no_scrollbar=True,
+                        ):
+                            with dpg.menu_bar():
+                                with dpg.menu(label="Export", enabled=False):
+                                    pass
+                            with dpg.group(horizontal=True):
+                                dpg.add_text("Include header".ljust(28))
+                                with dpg.tooltip(
+                                    dpg.last_item(), delay=TOOLTIP_DELAY_SEC
+                                ):
+                                    dpg.add_text(
+                                        "",
+                                        wrap=400,
+                                    )
+                                dpg.add_checkbox(default_value=True)
+                            with dpg.group(horizontal=True):
+                                dpg.add_text("Fill in zeroes".ljust(28))
+                                with dpg.tooltip(
+                                    dpg.last_item(), delay=TOOLTIP_DELAY_SEC
+                                ):
+                                    dpg.add_text(
+                                        "",
+                                        wrap=400,
+                                    )
+                                dpg.add_checkbox(default_value=False)
+                            with dpg.group(horizontal=True):
+                                dpg.add_text("Default path".ljust(28))
+                                with dpg.tooltip(
+                                    dpg.last_item(), delay=TOOLTIP_DELAY_SEC
+                                ):
+                                    dpg.add_text(
+                                        "",
+                                        wrap=400,
+                                    )
+                                dpg.add_input_text(default_value="Documents", width=200)
+                            with dpg.group(horizontal=True):
+                                dpg.add_text("Default format".ljust(28))
+                                with dpg.tooltip(
+                                    dpg.last_item(), delay=TOOLTIP_DELAY_SEC
+                                ):
+                                    dpg.add_text(
+                                        "",
+                                        wrap=400,
+                                    )
+                                dpg.add_combo(
+                                    items=[".csv", ".xlsx"],
+                                    default_value=".csv",
+                                    width=200,
+                                )
 
     def show_settings_modal(self):
         w, h = dpg.get_viewport_width(), dpg.get_viewport_height()

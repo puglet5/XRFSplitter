@@ -878,8 +878,9 @@ class TableData:
     def __post_init__(self):
         self.selections = {}
         self.selected_rows_range = (1, -1)
-        columns_to_drop = list(set(RESULTS_INFO) | set(RESULT_KEYS_ERR))
-        raw_csv = self._raw_to_csv(self._results_to_array(self._construct()))
+        raw_csv = self._raw_to_csv(
+            self._results_to_array(self._construct_results_dict())
+        )
         self.original = pd.read_csv(
             raw_csv,
             dtype=str,
@@ -889,17 +890,21 @@ class TableData:
             na_filter=False,
         )[::-1].replace(["0.0000"], "")
 
-        self.current = self.original.drop(columns=columns_to_drop).copy()
+        self.current = self.original.copy()
         self.original_cols = self.original.columns.tolist()
         self.shown_cols = self.current.columns.tolist()
         self.shown_rows = self.current.iloc[:, 0].tolist()
         self.empty_cols = []
-        self.first_row = int(
-            pd.to_numeric(self.original.iloc[-1, 0], errors="raise", downcast="integer")
-        )
-        self.last_row = int(
-            pd.to_numeric(self.original.iloc[0, 0], errors="raise", downcast="integer")
-        )
+        try:
+            self.first_row = int(
+                pd.to_numeric(
+                    self.original.iloc[-1, 0], errors="raise", downcast="integer"
+                )
+            )
+        except Exception as e:
+            logger.fatal(
+                f"Couldn't determine first table row. Probably a bad table format: {e}"
+            )
 
     def _sorter(self, x, y):
         strx = str(x[1])
@@ -935,7 +940,7 @@ class TableData:
         else:
             return 0
 
-    def _construct(self):
+    def _construct_results_dict(self):
         with open(self.path, "r") as f:
             lines_arr = list(
                 csv.reader(
@@ -964,20 +969,22 @@ class TableData:
         return results_data
 
     def _results_to_array(self, data: Results):
-        max_data_number = max([int(s) for s in data.keys()])
+        last_result = max([int(s) for s in data.keys()])
 
         data_selected = [
             [data.get(str(i), {}).get(k) for k in RESULT_KEYS]
-            for i in range(0, max_data_number + 1)
+            for i in range(0, last_result + 1)
         ]
 
         data_strings: list[list[str]] = [
             [i or "" for i in res] for res in data_selected if any(res)
         ]
 
+        self.last_row = last_result
+
         return data_strings
 
-    def _raw_to_csv(self, data):
+    def _raw_to_csv(self, data: list[list[str]]):
         data.insert(0, RESULT_KEYS)
         sio = StringIO()
         csv_writer = csv.writer(sio, quotechar="'")
