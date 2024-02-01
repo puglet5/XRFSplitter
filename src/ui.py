@@ -1,10 +1,17 @@
+from dataclasses import dataclass, field
 import gc
+import os
+from pathlib import Path
 import re
+from typing import Literal
 import uuid
 
-from numpy import short
+import numpy as np
+import dearpygui.dearpygui as dpg
 
-from utils import *
+from src.utils import COLUMN_PRESETS, ID_COL, LABEL_PAD, RESULT_ELEMENTS, RESULTS_INFO, TABLE_SIZE_APPROXIMATION_FACTOR_KB, PDZFile, PlotData, TableData, log_exec_time, logger, progress_bar
+
+
 
 TOOLTIP_DELAY_SEC = 0.1
 EMPTY_CELL_COLOR = [0.0, 0.0, 170.0000050663948, 20.0]
@@ -144,8 +151,8 @@ class UI:
             self.stop()
 
     def stop(self):
-        dpg.destroy_context()
         dpg.stop_dearpygui()
+        dpg.destroy_context()
 
     def setup_table(self, csv_path: Path):
         if dpg.does_item_exist(self.table_tag):
@@ -442,6 +449,7 @@ class UI:
             self.cycle_table_presets("left")
         if dpg.is_key_pressed(dpg.mvKey_Q):
             dpg.stop_dearpygui()
+            dpg.destroy_context()
         if dpg.is_key_pressed(dpg.mvKey_C):
             if self.table_data.selections:
                 self.table_data.selected_to_clipboard()
