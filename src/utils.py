@@ -5,10 +5,10 @@ import functools
 import logging
 import os
 import time
-from dataclasses import dataclass, field
+from attrs import define, field
 from datetime import datetime as dt
-from functools import cached_property, partial, wraps
-from io import StringIO
+from functools import cache, cached_property, partial, wraps
+from io import BufferedReader, StringIO
 from pathlib import Path
 from struct import unpack
 from typing import (
@@ -588,11 +588,10 @@ def progress_bar(
     return _wrapper  # type:ignore
 
 
-@dataclass
+@define
 class XRFSpectrum:
     datetime: dt = field(default=dt(1970, 1, 1, 0), init=False)
-    counts: list[float] = field(default_factory=list, init=False)
-    energies: list[float] = field(default_factory=list, init=False)
+    counts: list[float] = field(factory=list, init=False)
     source_voltage: float = field(default=0.0, init=False)  # in kV
     source_current: float = field(default=0.0, init=False)  # in uA
     filter_layer_1_element_z: int = field(default=0, init=False)  # Z num
@@ -615,23 +614,25 @@ class XRFSpectrum:
     _time_live: float = field(default=0.0, init=False)
     _counts_valid: int = field(default=0, init=False)
     _counts_raw: int = field(default=0, init=False)
+    _other: Any = field(init=False, default=None)
+    name: str = field(init=False, default="")
 
-    def calculate_energies_list(self):
-        self.energies = list(
+    @cached_property
+    def energies(self):
+        return list(
             ((i * self.energy_per_channel + self._energy_channel_start) * 0.001)
             for i in range(0, self._n_channels)
         )
-        return self.energies
 
 
-@dataclass
+@define
 class PDZFile:
     pdz_file_path: Path
     name: str = field(default="", init=False)
     anode_element_z: bytes = field(default=b"", init=False)
     tube_name: str = field(default="", init=False)
     tube_number: int = field(default=0, init=False)
-    spectra: list[XRFSpectrum] = field(default_factory=list, init=False)
+    spectra: list[XRFSpectrum] = field(factory=list, init=False)
     phase_count: int = field(default=0, init=False)
     datetime: dt = field(default=dt(1970, 1, 1, 0), init=False)
     instrument_serial_number: str = field(default="", init=False)
@@ -640,17 +641,30 @@ class PDZFile:
     detector_type: str = field(default="", init=False)
     collimator_type: str = field(default="", init=False)
     spectra_used: Literal["[1]", "[1+2]"] = field(init=False)
+    anode_element_symbol: str | None = field(init=False, default=None)
+    anode_element_name: str | None = field(init=False, default=None)
+    tube_type: str = field(default="", init=False)
     _assay_time_live: float = field(default=0.0, init=False)
     _assay_time_total: float = field(default=0.0, init=False)
     _other: Any = field(default=None, init=False)
     _firmware_vers_list_len: int = field(default=0, init=False)
     _pdz_file_version: int = field(default=25, init=False)
 
+    _dispatch: dict[str, Callable[[], Any]] = field(init=False, factory=dict)
+    _pdz_attr_formats_1: list[tuple[str, FMTS]] = field(init=False, factory=list)
+    _pdz_attr_formats_2: list[tuple[str, FMTS]] = field(init=False, factory=list)
+    _spectrum_attr_formats: list[tuple[str, FMTS]] = field(init=False, factory=list)
+
+    _pdz_file_reader: BufferedReader | None = field(init=False, default=None)
+
+    measurement_mode: str = field(init=False, default="")
+    _other: Any = field(init=False, default=None)
+
     def __repr__(self):
         kws = [f"{key}={value!r}" for key, value in self.__dict__.items()]
         return "{}({})".format(type(self).__name__, ", ".join(kws))
 
-    def __post_init__(self):
+    def __attrs_post_init__(self):
         self.name = os.path.basename(self.pdz_file_path)
         self._dispatch: dict[str, Callable[[], Any]] = {
             "B": partial(self._read_bytes, "B", 1),
@@ -728,14 +742,14 @@ class PDZFile:
             ("energy_per_channel", "f"),
             ("_other", "h"),
             ("_energy_channel_start", "f"),
-            ("_spectrum_year", "h"),
-            ("_spectrum_month", "h"),
-            ("_spectrum_datetimedayofweek", "h"),
-            ("_spectrum_day", "h"),
-            ("_spectrum_hour", "h"),
-            ("_spectrum_minute", "h"),
-            ("_spectrum_second", "h"),
-            ("_spectrum_millisecond", "h"),
+            ("_other", "h"),
+            ("_other", "h"),
+            ("_other", "h"),
+            ("_other", "h"),
+            ("_other", "h"),
+            ("_other", "h"),
+            ("_other", "h"),
+            ("_other", "h"),
             ("nose_pressure", "f"),
             ("_n_channels", "h"),
             ("nose_temp_celsius", "h"),
@@ -748,12 +762,15 @@ class PDZFile:
         self.datetime = self.spectra[0].datetime
 
     def _read_bytes(self, fmt: str, size: int):
+        assert self._pdz_file_reader is not None
         return unpack(fmt, self._pdz_file_reader.read(size))[0]
 
     def _read_n_bytes(self, size: int):
+        assert self._pdz_file_reader is not None
         return self._pdz_file_reader.read(size)
 
     def _read_string(self):
+        assert self._pdz_file_reader is not None
         return self._pdz_file_reader.read(self._read_bytes("<i", 4) * 2).decode("utf16")
 
     def _read_spectrum_params(self, spectrum: XRFSpectrum):
@@ -771,7 +788,7 @@ class PDZFile:
         self.spectra.append(XRFSpectrum())
         self._read_spectrum_params(self.spectra[-1])
         self._read_spectrum_counts(self.spectra[-1])
-        self.spectra[-1].calculate_energies_list()
+        self.spectra[-1].energies
         self.phase_count += 1
 
     def _read_pdz_data(self):
@@ -813,15 +830,16 @@ class PDZFile:
         return x, y
 
 
-@dataclass
+@define
 class PlotData:
     pdz_folder: str | Path
     pdz_data: dict[str, PDZFile] = field(init=False)
     pca_data: npt.NDArray[np.float_] | None = field(init=False)
     pca_shapes: list[list[npt.NDArray[np.float_]]] | None = field(init=False)
     pca_info: PCA | None = field(init=False)
+    pca: PCA = field(init=False, default=PCA(n_components=2, svd_solver="full"))
 
-    def __post_init__(self):
+    def __attrs_post_init__(self):
         self.clear()
 
     def clear(self):
@@ -860,7 +878,7 @@ class PlotData:
         plt.clf()
 
 
-@dataclass
+@define
 class TableData:
     path: str | Path
     original: DataFrame = field(init=False)
@@ -874,10 +892,10 @@ class TableData:
     lod_shown: bool = field(init=False, default=True)
     last_row: int = field(init=True, default=10000)
     first_row: int = field(init=True, default=1)
+    selected_rows_range: tuple[int, int] = field(init=False, default=(1, -1))
 
-    def __post_init__(self):
+    def __attrs_post_init__(self):
         self.selections = {}
-        self.selected_rows_range = (1, -1)
         raw_csv = self._raw_to_csv(
             self._results_to_array(self._construct_results_dict())
         )

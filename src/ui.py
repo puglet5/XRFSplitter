@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from attrs import define, field
 import gc
 import os
 from pathlib import Path
@@ -11,13 +11,11 @@ import dearpygui.dearpygui as dpg
 
 from src.utils import COLUMN_PRESETS, ID_COL, LABEL_PAD, RESULT_ELEMENTS, RESULTS_INFO, TABLE_SIZE_APPROXIMATION_FACTOR_KB, PDZFile, PlotData, TableData, log_exec_time, logger, progress_bar
 
-
-
 TOOLTIP_DELAY_SEC = 0.1
 EMPTY_CELL_COLOR = [0.0, 0.0, 170.0000050663948, 20.0]
 
 
-@dataclass
+@define
 class UI:
     table_data: TableData = field(init=False)
     plot_data: PlotData = field(init=False)
@@ -28,8 +26,10 @@ class UI:
     pdz_plot_last_frame_visible: int = field(init=False, default=0)
     last_row_selected: int = field(init=False, default=0)
     last_idle_frame: int = field(init=False, default=0)
+    global_theme: int = field(init=False, default=0)
+    pca_theme: int = field(init=False, default=0)
 
-    def __post_init__(self):
+    def __attrs_post_init__(self):
         dpg.create_context()
         dpg.create_viewport(title="xrf_splitter", width=1920, height=1080, vsync=True)
         dpg.configure_app(wait_for_input=False)
@@ -278,8 +278,8 @@ class UI:
 
         try:
             pdz = PDZFile(path)
-        except:
-            logger.error(f"Error decoding .pdz file: {path}")
+        except Exception as e:
+            logger.error(f"Error decoding .pdz file: {path}, {e}")
             return
 
         self.plot_data.pdz_data[label] = pdz

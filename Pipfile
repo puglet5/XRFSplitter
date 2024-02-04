@@ -13,6 +13,8 @@ dearpygui = "*"
 scipy = "*"
 scikit-learn = "*"
 matplotlib = "*"
+pyarrow = "*"
+attrs = "*"
 
 [dev-packages]
 black = "*"
