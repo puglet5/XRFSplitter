@@ -194,15 +194,11 @@ class UI:
     def setup_dev(self):
         self.pdz_file_dialog_callback(
             "",
-            {"file_path_name": "/home/puglet5/Documents/PROJ/test_data/smalts pdz"},
+            {"file_path_name": "/home/puglet5/Sync/xrf0902/Data"},
         )
         self.csv_file_dialog_callback(
             "",
-            {
-                "selections": {
-                    "1": "/home/puglet5/Documents/PROJ/XRFSplitter/sandbox/Results.csv"
-                }
-            },
+            {"selections": {"1": "/home/puglet5/Sync/xrf0902/Data/Results.csv"}},
         )
 
     def csv_file_dialog_callback(self, _sender, app_data: dict):
