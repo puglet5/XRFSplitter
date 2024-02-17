@@ -35,7 +35,6 @@ EMPTY_CELL_COLOR = [0.0, 0.0, 170.0000050663948, 20.0]
 class UI:
     table_data: TableData = field(init=False)
     plot_data: PlotData = field(init=False)
-    row_range: tuple[int, int] = field(init=False)
     table_tag: str = field(init=False, default="results_table")
     window_tag: str = field(init=False, default="primary_window")
     pca_plot_last_frame_visible: int = field(init=False, default=0)
@@ -159,6 +158,8 @@ class UI:
     def hide_modals(self):
         if dpg.is_item_visible("settings_modal"):
             dpg.hide_item("settings_modal")
+        if dpg.is_item_visible("save_pdz_modal"):
+            dpg.hide_item("save_pdz_modal")
 
     def bind_item_handlers(self):
         dpg.bind_theme(self.global_theme)
@@ -879,8 +880,11 @@ class UI:
         ):
             with dpg.menu_bar(tag="menu_bar"):
                 with dpg.menu(label="File"):
-                    dpg.add_menu_item(label="Save As", shortcut="(Ctrl+S)")
-                    dpg.add_menu_item(label="Save As", shortcut="(Ctrl+Shift+S)")
+                    dpg.add_menu_item(
+                        label="Save",
+                        shortcut="(Ctrl+S)",
+                        callback=self.prompt_pdz_data_save,
+                    )
 
                 with dpg.menu(label="Edit"):
                     dpg.add_menu_item(label="To clipboard", shortcut="(Ctrl+C)")
@@ -1505,7 +1509,7 @@ class UI:
                                     )
                                 dpg.add_checkbox(default_value=False)
                             with dpg.group(horizontal=True):
-                                dpg.add_text("Default path".ljust(28))
+                                dpg.add_text("Default directory".ljust(28))
                                 with dpg.tooltip(
                                     dpg.last_item(), delay=TOOLTIP_DELAY_SEC
                                 ):
@@ -1513,7 +1517,11 @@ class UI:
                                         "",
                                         wrap=400,
                                     )
-                                dpg.add_input_text(default_value="Documents", width=200)
+                                dpg.add_input_text(
+                                    default_value="Documents",
+                                    width=200,
+                                    tag="settings_export_default_directory",
+                                )
                             with dpg.group(horizontal=True):
                                 dpg.add_text("Default format".ljust(28))
                                 with dpg.tooltip(
