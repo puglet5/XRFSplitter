@@ -147,7 +147,7 @@ class UI:
 
     def save_state_init(self, path: str):
         dpg.save_init_file(path)
-
+    
     def load_state_json(self):
         ...
 
@@ -582,7 +582,7 @@ class UI:
         dpg.set_value("save_pdz_dir", f"{Path('./').absolute()}")
         dpg.show_item("save_pdz_modal")
 
-    @partial(loading_indicator, message="Fitting series")
+    @partial(loading_indicator, message="Exporting spectra")
     def save_pdz_data(self, directory: Path):
         if dpg.is_item_visible("save_pdz_modal"):
             dpg.hide_item("save_pdz_modal")
@@ -594,7 +594,7 @@ class UI:
 
         print(self.table_data.selections)
         for i, s in enumerate(self.table_data.selections):
-            yield (i / selections_total - 1) * 100
+            yield (i / selections_total) * 100
             pdz = self.plot_data.pdz_data.get(s, None)
             if pdz is None:
                 continue

@@ -862,10 +862,12 @@ class PDZFile:
                 if self._read_bytes("h", 2) == 3:
                     self._append_spectrum()
 
-    @cached_property
+    @property
     def plot_data(self):
         if len(self.spectra) == 3:
-            counts = np.array(self.spectra[1].counts) + np.array(self.spectra[2].counts)
+            counts = np.add(
+                np.array(self.spectra[1].counts), np.array(self.spectra[2].counts)
+            )
             self.spectra_used = "[1+2]"
         else:
             counts = np.array(self.spectra[0].counts)
