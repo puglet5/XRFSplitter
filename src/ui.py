@@ -1,10 +1,10 @@
 from functools import partial
-from attrs import define, field
+from attrs import define, field, asdict
 import gc
 import os
 from pathlib import Path
 import re
-from typing import Literal
+from typing import Any, Callable, Literal
 import uuid
 
 import numpy as np
@@ -32,7 +32,54 @@ EMPTY_CELL_COLOR = [0.0, 0.0, 170.0000050663948, 20.0]
 
 
 @define
+class Setting[T]:
+    tag: str | int
+    default_value: T
+    value: T = field(init=False)
+    callback: Callable
+
+    def __attrs_post_init__(self):
+        self.value = self.default_value
+
+    def update(self):
+        self.value = dpg.get_value(self.tag)
+        self.callback()
+
+    def set(self, value: T):
+        dpg.set_value(self.tag, value)
+        self.value = value
+
+    @property
+    def as_dict(self):
+        return {
+            "tag": self.tag,
+            "default_value": self.default_value,
+            "callback": self.update,
+        }
+
+    def disable(self):
+        dpg.disable_item(self.tag)
+
+    def enable(self):
+        dpg.enable_item(self.tag)
+
+
+@define
+class Settings:
+    table_highlighted: Setting[bool]
+    lod_shown: Setting[bool]
+    row_threshold: Setting[float]
+    filled_with_zeros: Setting[bool]
+    row_preset: Setting[str]
+    column_preset: Setting[str]
+    file_range_from: Setting[int]
+    file_range_to: Setting[int]
+    max_plots_shown: Setting[int]
+
+
+@define
 class UI:
+    settings: Settings = field(init=False)
     table_data: TableData = field(init=False)
     plot_data: PlotData = field(init=False)
     table_tag: str = field(init=False, default="results_table")
@@ -46,6 +93,7 @@ class UI:
     pca_theme: int = field(init=False, default=0)
 
     def __attrs_post_init__(self):
+        self.setup_settings()
         dpg.create_context()
         dpg.create_viewport(title="xrf_splitter", width=1920, height=1080, vsync=True)
         dpg.configure_app(wait_for_input=False)
@@ -55,6 +103,31 @@ class UI:
         self.setup_layout()
         self.bind_themes()
         self.bind_item_handlers()
+
+    def setup_settings(self):
+        self.settings = Settings(
+            table_highlighted=Setting(
+                "settings_highlight_table", True, self.toggle_highlight_table
+            ),
+            lod_shown=Setting("settings_lod_shown", False, self.populate_table),
+            row_threshold=Setting(
+                "settings_row_threshold", 70, lambda *_args, **_kwargs: None
+            ),
+            filled_with_zeros=Setting(
+                "settings_filled_with_zeros", False, self.populate_table
+            ),
+            row_preset=Setting(
+                "settings_row_preset", "Valid rows, normalized", self.populate_table
+            ),
+            column_preset=Setting(
+                "settings_column_preset", "Non-empty elements", self.populate_table
+            ),
+            file_range_from=Setting("from", 2100, self.populate_table),
+            file_range_to=Setting("to", -1, self.populate_table),
+            max_plots_shown=Setting(
+                "max_plots_shown", 10, lambda *_args, **_kwargs: None
+            ),
+        )
 
     def setup_themes(self):
         with dpg.theme() as self.global_theme:
@@ -152,7 +225,7 @@ class UI:
         with dpg.item_handler_registry(tag="pca_plot_visible_handler"):
             dpg.add_item_visible_handler(callback=self.pca_plot_visible_callback)
 
-        with dpg.item_handler_registry(tag="row_threshold_slider_handler"):
+        with dpg.item_handler_registry(tag="settings_row_threshold_handler"):
             dpg.add_item_deactivated_after_edit_handler(callback=self.populate_table)
 
     def hide_modals(self):
@@ -169,7 +242,7 @@ class UI:
         dpg.bind_item_handler_registry(self.window_tag, "window_resize_handler")
         dpg.bind_item_handler_registry("pca_plot", "pca_plot_visible_handler")
         dpg.bind_item_handler_registry(
-            "row_threshold_slider", "row_threshold_slider_handler"
+            self.settings.row_threshold.tag, "settings_row_threshold_handler"
         )
 
     def bind_themes(self):
@@ -226,7 +299,6 @@ class UI:
             width=-1,
         )
 
-        self.enable_table_controls()
         self.populate_table()
 
         dpg.configure_item(self.table_tag, sortable=True)
@@ -234,11 +306,11 @@ class UI:
     def setup_dev(self):
         self.pdz_file_dialog_callback(
             "",
-            {"file_path_name": "/home/puglet5/Sync/xrf0902/Data"},
+            {"file_path_name": "/home/puglet5/Sync/XRF/Data"},
         )
         self.csv_file_dialog_callback(
             "",
-            {"selections": {"1": "/home/puglet5/Sync/xrf0902/Data/Results.csv"}},
+            {"selections": {"1": "/home/puglet5/Sync/XRF/Data/Results.csv"}},
         )
 
     def csv_file_dialog_callback(self, _sender, app_data: dict):
@@ -249,12 +321,12 @@ class UI:
         self.setup_table(Path(file_selection))
 
         dpg.configure_item(
-            "from",
+            self.settings.file_range_from.tag,
             min_value=self.table_data.first_row,
             max_value=self.table_data.last_row,
         )
         dpg.configure_item(
-            "to",
+            self.settings.file_range_to.tag,
             max_value=self.table_data.last_row,
         )
 
@@ -293,6 +365,8 @@ class UI:
         col_ids = sorted(df.columns.get_loc(c) for c in RESULT_ELEMENTS if c in df)
         arr = df.iloc[:, col_ids].replace(["< LOD", ""], 0).to_numpy().astype(float)
         for row_i, row in enumerate(arr):
+            if len(row) == 0:
+                return
             t = np.nan_to_num(row / np.max(row), nan=0)
             t = np.log(t + 0.01)
             t = np.interp(t, (t.min(), t.max()), (0, 1))
@@ -325,7 +399,7 @@ class UI:
         if plots_shown is None:
             return
 
-        if len(plots_shown) >= dpg.get_value("max_plots_shown"):
+        if len(plots_shown) >= self.settings.max_plots_shown.value:
             dpg.delete_item(plots_shown[0])
 
         dpg.add_line_series(
@@ -426,7 +500,7 @@ class UI:
         self.pca_plot_last_frame_visible = dpg.get_frame_count()
 
     def toggle_highlight_table(self):
-        if dpg.get_value("table_highlight_checkbox"):
+        if self.settings.table_highlighted.value:
             self.unhighlight_table()
             self.highlight_table()
         else:
@@ -478,19 +552,19 @@ class UI:
         self.populate_table(skip_equals_check=True)
 
     def cycle_table_presets(self, direction: Literal["left", "right"]):
-        current_preset = dpg.get_value("column_preset_combo")
+        current_preset = self.settings.column_preset.value
         presets = list(COLUMN_PRESETS.keys())
         current_preset_index = presets.index(current_preset)
         if direction == "left":
             if current_preset_index < len(presets) - 1:
-                dpg.set_value("column_preset_combo", presets[current_preset_index + 1])
+                self.settings.column_preset.set(presets[current_preset_index + 1])
             else:
-                dpg.set_value("column_preset_combo", presets[0])
+                self.settings.column_preset.set(presets[0])
         if direction == "right":
             if current_preset_index > 0:
-                dpg.set_value("column_preset_combo", presets[current_preset_index - 1])
+                self.settings.column_preset.set(presets[current_preset_index - 1])
             else:
-                dpg.set_value("column_preset_combo", presets[-1])
+                self.settings.column_preset.set(presets[-1])
         self.populate_table()
 
     def on_key_ctrl(self):
@@ -526,22 +600,29 @@ class UI:
                 menubar_visible = dpg.get_item_configuration(self.window_tag)["menubar"]
                 dpg.configure_item(self.window_tag, menubar=(not menubar_visible))
 
-    def enable_table_controls(self):
-        dpg.enable_item("table_highlight_checkbox")
-        dpg.show_item("table_highlight_checkbox")
-        dpg.enable_item("lod_checkbox")
-        dpg.show_item("lod_checkbox")
-        dpg.set_value("lod_checkbox", False)
-
     def prompt_pdz_data_save(self):
         selections_total = len(self.table_data.selections)
         if selections_total == 0:
             return
 
+        selected_pdzs = [
+            self.plot_data.pdz_data.get(s, None) for s in self.table_data.selections
+        ]
+        invalid_pdzs_total = selected_pdzs.count(None)
+
+        if selections_total - invalid_pdzs_total == 0:
+            return
+
         if selections_total == 1:
-            dpg.set_value("save_pdz_count", f"Saving {selections_total} .pdz file to:")
+            dpg.set_value(
+                "save_pdz_count",
+                f"Saving {selections_total - invalid_pdzs_total} (exluding {invalid_pdzs_total} invalid) .pdz file to:",
+            )
         else:
-            dpg.set_value("save_pdz_count", f"Saving {selections_total} .pdz files to:")
+            dpg.set_value(
+                "save_pdz_count",
+                f"Saving {selections_total - invalid_pdzs_total} (exluding {invalid_pdzs_total} invalid) .pdz files to:",
+            )
 
         dpg.set_value("save_pdz_dir", f"{Path('./').absolute()}")
         dpg.show_item("save_pdz_modal")
@@ -555,13 +636,16 @@ class UI:
             directory.mkdir(parents=True, exist_ok=True)
 
         selections_total = len(self.table_data.selections)
+
         for i, s in enumerate(self.table_data.selections):
-            pdz = self.plot_data.pdz_data[s]
+            yield (i / selections_total - 1) * 100
+            pdz = self.plot_data.pdz_data.get(s, None)
+            if pdz is None:
+                return
             data = pdz.plot_data
             df = pd.DataFrame(data.T)
             filename = "".join(pdz.name.split(".")[:-1])
             df.to_csv(f"{directory}/{filename}.csv", index=False, header=False)
-            yield (i / selections_total - 1) * 100
 
     @log_exec_time
     @progress_bar
@@ -671,43 +755,39 @@ class UI:
 
     @log_exec_time
     def prepare_data(self):
-        range_from = dpg.get_value("from")
-        range_to = dpg.get_value("to")
+        range_from = self.settings.file_range_from.value
+        range_to = self.settings.file_range_to.value
         if range_to < range_from and range_to != -1:
-            dpg.set_value("to", range_from)
+            self.settings.file_range_to.set(range_from)
             range_to = range_from
 
         self.table_data.selected_rows_range = (range_from, range_to)
         self.table_data.select_rows_range()
 
-        column_preset: str = dpg.get_value("column_preset_combo")
+        column_preset = self.settings.column_preset.value
         for column, state in COLUMN_PRESETS[column_preset]:
             self.table_data.toggle_columns(column, state)
 
-        self.table_data.toggle_lod(dpg.get_value("lod_checkbox"))
+        self.table_data.toggle_lod(self.settings.lod_shown.value)
 
-        row_preset: str = dpg.get_value("row_preset_combo")
+        row_preset = self.settings.row_preset.value
         if row_preset == "All rows":
-            ...
+            pass
         if row_preset == "Non-empty rows":
             self.table_data.filter_empty_rows()
         if row_preset == "Valid rows":
             self.table_data.filter_empty_rows()
             if not column_preset == "Info":
-                self.table_data.filter_invalid_rows(
-                    dpg.get_value("row_threshold_slider")
-                )
+                self.table_data.filter_invalid_rows(self.settings.row_threshold.value)
         if row_preset == "Valid rows, normalized":
             self.table_data.filter_empty_rows()
             if not column_preset == "Info":
-                self.table_data.filter_invalid_rows(
-                    dpg.get_value("row_threshold_slider")
-                )
+                self.table_data.filter_invalid_rows(self.settings.row_threshold.value)
                 self.table_data.normalize_rows()
         if column_preset == "Non-empty elements":
             self.table_data.toggle_columns("empty", False)
 
-        if dpg.get_value("fill_with_zeros_checkbox"):
+        if self.settings.filled_with_zeros.value:
             self.table_data.fill_with_zeros()
 
     def clear_plots(self):
@@ -721,16 +801,6 @@ class UI:
     @log_exec_time
     @progress_bar
     def populate_table(self, skip_equals_check=False):
-        """
-        Populates table `self.table_tag` with data from global `table_data`.
-
-        Called on sort, row/column selection and '< LOD' toggle.
-
-        Regenerates previously selected rows.
-
-        Rehighlights table if `table_highlight_checkbox` is set.
-        """
-
         if not skip_equals_check:
             pre = self.table_data.current.copy()
             self.prepare_data()
@@ -738,7 +808,7 @@ class UI:
                 return
 
         with dpg.mutex():
-            if dpg.get_value("table_highlight_checkbox"):
+            if self.settings.table_highlighted.value:
                 self.unhighlight_table()
             try:
                 dpg.delete_item(self.table_tag, children_only=True)
@@ -785,12 +855,12 @@ class UI:
                     for j in range(1, arr.shape[1]):
                         dpg.add_selectable(label=arr[i, j])
 
-            if dpg.get_value("column_preset_combo") == "Info":
-                dpg.disable_item("table_highlight_checkbox")
+            if self.settings.column_preset.value == "Info":
+                self.settings.table_highlighted.disable()
                 self.unhighlight_table()
             else:
-                dpg.enable_item("table_highlight_checkbox")
-                if dpg.get_value("table_highlight_checkbox"):
+                self.settings.table_highlighted.enable()
+                if self.settings.table_highlighted.value:
                     self.toggle_highlight_table()
 
             dpg.set_value(
@@ -972,12 +1042,11 @@ class UI:
                                     )
                                 dpg.add_input_int(
                                     width=-1,
-                                    default_value=10,
                                     min_value=1,
                                     min_clamped=True,
                                     max_value=100,
                                     max_clamped=True,
-                                    tag="max_plots_shown",
+                                    **self.settings.max_plots_shown.as_dict,
                                 )
 
                     with dpg.collapsing_header(default_open=True, label="PCA plot"):
@@ -998,13 +1067,7 @@ class UI:
                                             """,
                                             wrap=400,
                                         )
-                                    dpg.add_checkbox(
-                                        default_value=False,
-                                        tag="lod_checkbox",
-                                        callback=self.populate_table,
-                                        enabled=False,
-                                        show=False,
-                                    )
+                                    dpg.add_checkbox(**self.settings.lod_shown.as_dict)
 
                                 with dpg.group(horizontal=True):
                                     dpg.add_text("Row sum threshold".rjust(LABEL_PAD))
@@ -1021,10 +1084,9 @@ class UI:
                                         width=-1,
                                         min_value=0,
                                         max_value=99,
-                                        default_value=70,
                                         format="%.1f",
                                         clamped=True,
-                                        tag="row_threshold_slider",
+                                        **self.settings.row_threshold.as_dict,
                                     )
 
                                 with dpg.group(horizontal=True):
@@ -1039,10 +1101,7 @@ class UI:
                                             wrap=400,
                                         )
                                     dpg.add_checkbox(
-                                        tag="table_highlight_checkbox",
-                                        default_value=True,
-                                        callback=self.toggle_highlight_table,
-                                        show=False,
+                                        **self.settings.table_highlighted.as_dict
                                     )
                                 with dpg.group(horizontal=True):
                                     dpg.add_text("Fill with zeros".rjust(LABEL_PAD))
@@ -1056,10 +1115,7 @@ class UI:
                                             wrap=400,
                                         )
                                     dpg.add_checkbox(
-                                        tag="fill_with_zeros_checkbox",
-                                        default_value=False,
-                                        callback=self.populate_table,
-                                        show=True,
+                                        **self.settings.filled_with_zeros.as_dict
                                     )
                                 with dpg.group(horizontal=True):
                                     dpg.add_text("Column preset".rjust(LABEL_PAD))
@@ -1085,9 +1141,7 @@ class UI:
                                             "Non-empty elements",
                                             "Info",
                                         ],
-                                        default_value="Non-empty elements",
-                                        callback=self.populate_table,
-                                        tag="column_preset_combo",
+                                        **self.settings.column_preset.as_dict,
                                     )
 
                                 with dpg.group(horizontal=True):
@@ -1114,9 +1168,7 @@ class UI:
                                             "Valid rows",
                                             "Valid rows, normalized",
                                         ],
-                                        default_value="Valid rows, normalized",
-                                        callback=self.populate_table,
-                                        tag="row_preset_combo",
+                                        **self.settings.row_preset.as_dict,
                                     )
 
                                 with dpg.group(horizontal=True):
@@ -1132,15 +1184,13 @@ class UI:
                                         with dpg.group(horizontal=True):
                                             dpg.add_text("from".rjust(4))
                                             dpg.add_input_int(
-                                                tag="from",
+                                                **self.settings.file_range_from.as_dict,
                                                 width=-1,
                                                 max_value=10000,
                                                 min_value=1,
                                                 min_clamped=True,
                                                 max_clamped=True,
-                                                default_value=2100,
                                                 on_enter=True,
-                                                callback=self.populate_table,
                                             )
                                         with dpg.group(horizontal=True):
                                             dpg.add_text("to".rjust(4))
@@ -1152,15 +1202,13 @@ class UI:
                                                     wrap=400,
                                                 )
                                             dpg.add_input_int(
-                                                tag="to",
+                                                **self.settings.file_range_to.as_dict,
                                                 width=-1,
                                                 max_value=10000,
                                                 min_value=-1,
-                                                default_value=-1,
                                                 min_clamped=True,
                                                 max_clamped=True,
                                                 on_enter=True,
-                                                callback=self.populate_table,
                                             )
                                 with dpg.group(horizontal=True):
                                     dpg.add_text("Table dimensions".rjust(LABEL_PAD))
