@@ -4,6 +4,7 @@ import csv
 import functools
 import logging
 import os
+import threading
 import time
 from attrs import define, field
 from datetime import datetime as dt
@@ -588,6 +589,47 @@ def progress_bar(
     return _wrapper  # type:ignore
 
 
+def show_loading_indicator():
+    dpg.show_item("loading_indicator")
+
+
+def hide_loading_indicator():
+    if dpg.is_item_shown("loading_indicator"):
+        dpg.hide_item("loading_indicator")
+
+
+def loading_indicator(
+    f: Callable[P, Generator[float | int, Any, Any]], message: str
+) -> Callable[P, Generator[float | int, Any, Any]]:  # type:ignore
+    @wraps(f)
+    def _wrapper(*args, **kwargs):
+        dpg.configure_item("loading_indicator_message", label=message.center(30))
+        threading.Timer(0.1, show_loading_indicator).start()
+        progress_generator = f(*args, **kwargs)
+
+        try:
+            while True:
+                progress = next(progress_generator)
+                dpg.configure_item(
+                    "loading_indicator_message",
+                    label=f"{message}: {progress:.0f}%".center(30),
+                )
+        except StopIteration as result:
+            return result.value
+        except TypeError:
+            return None
+        except Exception as e:
+            raise ValueError from e
+        finally:
+            dpg.configure_item(
+                "loading_indicator_message",
+                label=f"{message}: 100%".center(30),
+            )
+            threading.Timer(0.5, hide_loading_indicator).start()
+
+    return _wrapper  # type:ignore
+
+
 @define
 class XRFSpectrum:
     datetime: dt = field(default=dt(1970, 1, 1, 0), init=False)
@@ -619,9 +661,17 @@ class XRFSpectrum:
 
     @cached_property
     def energies(self):
-        return list(
-            ((i * self.energy_per_channel + self._energy_channel_start) * 0.001)
-            for i in range(0, self._n_channels)
+        return np.array(
+            [
+                round(
+                    (
+                        (i * self.energy_per_channel + self._energy_channel_start)
+                        * 0.001
+                    ),
+                    4,
+                )
+                for i in range(0, self._n_channels)
+            ]
         )
 
 
@@ -659,10 +709,6 @@ class PDZFile:
 
     measurement_mode: str = field(init=False, default="")
     _other: Any = field(init=False, default=None)
-
-    def __repr__(self):
-        kws = [f"{key}={value!r}" for key, value in self.__dict__.items()]
-        return "{}({})".format(type(self).__name__, ", ".join(kws))
 
     def __attrs_post_init__(self):
         self.name = os.path.basename(self.pdz_file_path)
@@ -816,27 +862,29 @@ class PDZFile:
     @cached_property
     def plot_data(self):
         if len(self.spectra) == 3:
-            counts = [
-                a + b for a, b in zip(self.spectra[1].counts, self.spectra[2].counts)
-            ]
+            counts = np.array(self.spectra[1].counts) + np.array(self.spectra[2].counts)
             self.spectra_used = "[1+2]"
         else:
-            counts = self.spectra[0].counts
+            counts = np.array(self.spectra[0].counts)
             self.spectra_used = "[1]"
 
         x = self.spectra[0].energies
         y = counts
 
-        return x, y
+        return np.array([x, y])
 
 
 @define
 class PlotData:
-    pdz_folder: str | Path
-    pdz_data: dict[str, PDZFile] = field(init=False)
-    pca_data: npt.NDArray[np.float_] | None = field(init=False)
-    pca_shapes: list[list[npt.NDArray[np.float_]]] | None = field(init=False)
-    pca_info: PCA | None = field(init=False)
+    pdz_folder: Path
+    pdz_data: dict[str, PDZFile] = field(init=False, factory=dict)
+    pca_data: npt.NDArray[np.float_] | None = field(
+        init=False, factory=lambda: np.array([])
+    )
+    pca_shapes: list[list[npt.NDArray[np.float_]]] | None = field(
+        init=False, factory=list
+    )
+    pca_info: PCA | None = field(init=False, default=None)
     pca: PCA = field(init=False, default=PCA(n_components=2, svd_solver="full"))
 
     def __attrs_post_init__(self):

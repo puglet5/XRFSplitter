@@ -1,3 +1,4 @@
+from functools import partial
 from attrs import define, field
 import gc
 import os
@@ -8,8 +9,23 @@ import uuid
 
 import numpy as np
 import dearpygui.dearpygui as dpg
+import pandas as pd
 
-from src.utils import COLUMN_PRESETS, ID_COL, LABEL_PAD, RESULT_ELEMENTS, RESULTS_INFO, TABLE_SIZE_APPROXIMATION_FACTOR_KB, PDZFile, PlotData, TableData, log_exec_time, logger, progress_bar
+from src.utils import (
+    COLUMN_PRESETS,
+    ID_COL,
+    LABEL_PAD,
+    RESULT_ELEMENTS,
+    RESULTS_INFO,
+    TABLE_SIZE_APPROXIMATION_FACTOR_KB,
+    PDZFile,
+    PlotData,
+    TableData,
+    loading_indicator,
+    log_exec_time,
+    logger,
+    progress_bar,
+)
 
 TOOLTIP_DELAY_SEC = 0.1
 EMPTY_CELL_COLOR = [0.0, 0.0, 170.0000050663948, 20.0]
@@ -27,6 +43,7 @@ class UI:
     last_row_selected: int = field(init=False, default=0)
     last_idle_frame: int = field(init=False, default=0)
     global_theme: int = field(init=False, default=0)
+    button_theme: int = field(init=False, default=0)
     pca_theme: int = field(init=False, default=0)
 
     def __attrs_post_init__(self):
@@ -46,10 +63,7 @@ class UI:
                 dpg.add_theme_style(
                     dpg.mvStyleVar_FrameBorderSize, 1, category=dpg.mvThemeCat_Core
                 )
-            with dpg.theme_component(dpg.mvLineSeries):
-                dpg.add_theme_style(
-                    dpg.mvPlotStyleVar_LineWeight, 2, category=dpg.mvThemeCat_Plots
-                )
+
             with dpg.theme_component(dpg.mvAll):
                 dpg.add_theme_color(
                     dpg.mvThemeCol_Header,
@@ -87,6 +101,24 @@ class UI:
                     category=dpg.mvThemeCat_Plots,
                 )
 
+        with dpg.theme() as self.button_theme:
+            with dpg.theme_component(dpg.mvButton):
+                dpg.add_theme_color(
+                    dpg.mvThemeCol_Button,
+                    (37, 37, 38, -255),
+                    category=dpg.mvThemeCat_Core,
+                )
+                dpg.add_theme_color(
+                    dpg.mvThemeCol_ButtonActive,
+                    (37, 37, 38, -255),
+                    category=dpg.mvThemeCat_Core,
+                )
+                dpg.add_theme_color(
+                    dpg.mvThemeCol_ButtonHovered,
+                    (37, 37, 38, -255),
+                    category=dpg.mvThemeCat_Core,
+                )
+
     def save_state_init(self, path: str):
         dpg.save_init_file(path)
 
@@ -96,10 +128,17 @@ class UI:
     def save_state_json(self):
         ...
 
+    def confirm_pdz_export(self):
+        if dpg.is_item_visible("save_pdz_modal"):
+            self.save_pdz_data(Path(dpg.get_value("save_pdz_dir")))
+
     def setup_handler_registries(self):
         with dpg.handler_registry():
             dpg.add_key_down_handler(dpg.mvKey_Control, callback=self.on_key_ctrl)
             dpg.add_key_down_handler(dpg.mvKey_Escape, callback=self.hide_modals)
+            dpg.add_key_down_handler(
+                dpg.mvKey_Return, callback=lambda: self.confirm_pdz_export()
+            )
             # dpg.add_mouse_move_handler(callback=mouse_move_callback)
 
         with dpg.item_handler_registry(tag="row_hover_handler"):
@@ -219,7 +258,7 @@ class UI:
         )
 
     def pdz_file_dialog_callback(self, _sender, app_data: dict[str, str]):
-        self.plot_data = PlotData(app_data.get("file_path_name", ""))
+        self.plot_data = PlotData(Path(app_data.get("file_path_name", "")))
 
     def setup_file_dialogs(self):
         with dpg.file_dialog(
@@ -280,6 +319,13 @@ class UI:
 
         self.plot_data.pdz_data[label] = pdz
         x, y = pdz.plot_data
+
+        plots_shown = dpg.get_item_children("y_axis", slot=1)
+        if plots_shown is None:
+            return
+
+        if len(plots_shown) >= dpg.get_value("max_plots_shown"):
+            dpg.delete_item(plots_shown[0])
 
         dpg.add_line_series(
             x,
@@ -358,6 +404,14 @@ class UI:
         if dpg.is_item_visible("settings_modal"):
             w, h = dpg.get_viewport_width(), dpg.get_viewport_height()
             dpg.configure_item("settings_modal", pos=[w // 2 - 350, h // 2 - 200])
+
+        if dpg.is_item_visible("save_pdz_modal"):
+            w, h = dpg.get_viewport_width(), dpg.get_viewport_height()
+            dpg.configure_item("save_pdz_modal", pos=[w // 2 - 350, h // 2 - 200])
+
+        w, h = dpg.get_viewport_width(), dpg.get_viewport_height()
+        if dpg.does_item_exist("loading_indicator"):
+            dpg.configure_item("loading_indicator", pos=(w // 2 - 100, h // 2 - 100))
 
     def pca_plot_visible_callback(self, _sender, _data):
         if not self.pca_plot_is_visible():
@@ -446,6 +500,9 @@ class UI:
         if dpg.is_key_pressed(dpg.mvKey_Q):
             dpg.stop_dearpygui()
             dpg.destroy_context()
+        if dpg.is_key_pressed(dpg.mvKey_S):
+            self.prompt_pdz_data_save()
+
         if dpg.is_key_pressed(dpg.mvKey_C):
             if self.table_data.selections:
                 self.table_data.selected_to_clipboard()
@@ -474,6 +531,36 @@ class UI:
         dpg.enable_item("lod_checkbox")
         dpg.show_item("lod_checkbox")
         dpg.set_value("lod_checkbox", False)
+
+    def prompt_pdz_data_save(self):
+        selections_total = len(self.table_data.selections)
+        if selections_total == 0:
+            return
+
+        if selections_total == 1:
+            dpg.set_value("save_pdz_count", f"Saving {selections_total} .pdz file to:")
+        else:
+            dpg.set_value("save_pdz_count", f"Saving {selections_total} .pdz files to:")
+
+        dpg.set_value("save_pdz_dir", f"{Path('./').absolute()}")
+        dpg.show_item("save_pdz_modal")
+
+    @partial(loading_indicator, message="Fitting series")
+    def save_pdz_data(self, directory: Path):
+        if dpg.is_item_visible("save_pdz_modal"):
+            dpg.hide_item("save_pdz_modal")
+
+        if not directory.is_dir():
+            directory.mkdir(parents=True, exist_ok=True)
+
+        selections_total = len(self.table_data.selections)
+        for i, s in enumerate(self.table_data.selections):
+            pdz = self.plot_data.pdz_data[s]
+            data = pdz.plot_data
+            df = pd.DataFrame(data.T)
+            filename = "".join(pdz.name.split(".")[:-1])
+            df.to_csv(f"{directory}/{filename}.csv", index=False, header=False)
+            yield (i / selections_total - 1) * 100
 
     @log_exec_time
     @progress_bar
@@ -555,14 +642,11 @@ class UI:
 
         with dpg.mutex():
             if value:
-                files = [
-                    filename
-                    for filename in os.listdir(self.plot_data.pdz_folder)
-                    if filename.endswith(".pdz")
-                ]
+
+                files = list(self.plot_data.pdz_folder.rglob("*.pdz"))
 
                 patt = re.compile(f"^([0]+){spectrum_label}-")
-                files_re = [s for s in files if patt.match(s)]
+                files_re = [s for s in files if patt.match(s.name)]
                 file = files_re[0] if files_re else None
                 selections[spectrum_label] = cell
                 if file is not None:
@@ -869,188 +953,216 @@ class UI:
                     with dpg.tooltip("table_progress", delay=TOOLTIP_DELAY_SEC):
                         dpg.add_text("Current operation progress")
 
-                    with dpg.child_window(width=-1, height=-1):
-                        with dpg.group(tag="table_controls", horizontal=False):
+                    with dpg.collapsing_header(default_open=True, label="XRF plots"):
+                        with dpg.child_window(width=-1, height=200):
                             with dpg.group(horizontal=True):
-                                dpg.add_text("Show '< LOD'".rjust(LABEL_PAD))
+                                dpg.add_text("Max plots shown".rjust(LABEL_PAD))
                                 with dpg.tooltip(
                                     dpg.last_item(), delay=TOOLTIP_DELAY_SEC
                                 ):
                                     dpg.add_text(
-                                        """Shows '< LOD' values in cells
-                                            Default: off
-                                        """,
+                                        """Maximum number of (last selected) plots to show.
+                                                Default: 10
+                                            """,
                                         wrap=400,
                                     )
-                                dpg.add_checkbox(
-                                    default_value=False,
-                                    tag="lod_checkbox",
-                                    callback=self.populate_table,
-                                    enabled=False,
-                                    show=False,
-                                )
-
-                            with dpg.group(horizontal=True):
-                                dpg.add_text("Row sum threshold".rjust(LABEL_PAD))
-                                with dpg.tooltip(
-                                    dpg.last_item(), delay=TOOLTIP_DELAY_SEC
-                                ):
-                                    dpg.add_text(
-                                        """Sets threshold to filter valid rows.\nCtrl+LMB to edit directly
-                                            Default: 70.0
-                                        """,
-                                        wrap=400,
-                                    )
-                                dpg.add_slider_float(
+                                dpg.add_input_int(
                                     width=-1,
-                                    min_value=0,
-                                    max_value=99,
-                                    default_value=70,
-                                    format="%.1f",
-                                    clamped=True,
-                                    tag="row_threshold_slider",
+                                    default_value=10,
+                                    min_value=1,
+                                    min_clamped=True,
+                                    max_value=100,
+                                    max_clamped=True,
+                                    tag="max_plots_shown",
                                 )
 
-                            with dpg.group(horizontal=True):
-                                dpg.add_text("Highlight table".rjust(LABEL_PAD))
-                                with dpg.tooltip(
-                                    dpg.last_item(), delay=TOOLTIP_DELAY_SEC
-                                ):
-                                    dpg.add_text(
-                                        """Highlights table cells row-wise based on cell's value relative to row's total (normalized, blue to red from lowest to highest value)
-                                            Default: on
-                                        """,
-                                        wrap=400,
-                                    )
-                                dpg.add_checkbox(
-                                    tag="table_highlight_checkbox",
-                                    default_value=True,
-                                    callback=self.toggle_highlight_table,
-                                    show=False,
-                                )
-                            with dpg.group(horizontal=True):
-                                dpg.add_text("Fill with zeros".rjust(LABEL_PAD))
-                                with dpg.tooltip(
-                                    dpg.last_item(), delay=TOOLTIP_DELAY_SEC
-                                ):
-                                    dpg.add_text(
-                                        """Fills empty cells with zeros. Doesn't remove '< LOD' values
-                                            Default: off
-                                        """,
-                                        wrap=400,
-                                    )
-                                dpg.add_checkbox(
-                                    tag="fill_with_zeros_checkbox",
-                                    default_value=False,
-                                    callback=self.populate_table,
-                                    show=True,
-                                )
-                            with dpg.group(horizontal=True):
-                                dpg.add_text("Column preset".rjust(LABEL_PAD))
-                                with dpg.tooltip(
-                                    dpg.last_item(), delay=TOOLTIP_DELAY_SEC
-                                ):
-                                    dpg.add_text(
-                                        """Selects a set of columns to be shown:
-                                                         - All elements: show column for every element found in the original table
-                                                         - Non-empty elements: only show columns for elements with at least one value (not zero, empty or '< LOD') in selected rows
-                                                         - Info: show columns with data acquisition information. Empty columns are always shown
-                                                        
-                                                        Columns with error estimates are not included in the table
-                                                        
-                                                            Default: Non-empty elements
-                                                        """,
-                                        wrap=400,
-                                    )
-                                dpg.add_combo(
-                                    width=-1,
-                                    items=[
-                                        "All elements",
-                                        "Non-empty elements",
-                                        "Info",
-                                    ],
-                                    default_value="Non-empty elements",
-                                    callback=self.populate_table,
-                                    tag="column_preset_combo",
-                                )
+                    with dpg.collapsing_header(default_open=True, label="PCA plot"):
+                        with dpg.child_window(width=-1, height=200):
+                            pass
 
-                            with dpg.group(horizontal=True):
-                                dpg.add_text("Row preset".rjust(LABEL_PAD))
-                                with dpg.tooltip(
-                                    dpg.last_item(), delay=TOOLTIP_DELAY_SEC
-                                ):
-                                    dpg.add_text(
-                                        """Selects a set of rows to be shown:
-                                                         - All rows: show all rows, no filters
-                                                         - Non-empty rows: only show rows with at least value in selected columns
-                                                         - Valid rows: show rows, sums of which pass threshold. Max is 100
-                                                         - Valid rows, normalized: show valid rows with values normalized to total
-                                                        
-                                                            Default: Valid rows
-                                                        """,
-                                        wrap=400,
-                                    )
-                                dpg.add_combo(
-                                    width=-1,
-                                    items=[
-                                        "All rows",
-                                        "Non-empty rows",
-                                        "Valid rows",
-                                        "Valid rows, normalized",
-                                    ],
-                                    default_value="Valid rows, normalized",
-                                    callback=self.populate_table,
-                                    tag="row_preset_combo",
-                                )
-
-                            with dpg.group(horizontal=True):
-                                dpg.add_text("File range".rjust(LABEL_PAD))
-                                with dpg.tooltip(
-                                    dpg.last_item(), delay=TOOLTIP_DELAY_SEC
-                                ):
-                                    dpg.add_text(
-                                        "Select rows with first column [File #] value within the range",
-                                        wrap=400,
-                                    )
-                                with dpg.group(horizontal=False):
-                                    with dpg.group(horizontal=True):
-                                        dpg.add_text("from".rjust(4))
-                                        dpg.add_input_int(
-                                            tag="from",
-                                            width=-1,
-                                            max_value=10000,
-                                            min_value=1,
-                                            min_clamped=True,
-                                            max_clamped=True,
-                                            default_value=2100,
-                                            on_enter=True,
-                                            callback=self.populate_table,
+                    with dpg.collapsing_header(default_open=True, label="Table"):
+                        with dpg.child_window(width=-1, height=-1):
+                            with dpg.group(tag="table_controls", horizontal=False):
+                                with dpg.group(horizontal=True):
+                                    dpg.add_text("Show '< LOD'".rjust(LABEL_PAD))
+                                    with dpg.tooltip(
+                                        dpg.last_item(), delay=TOOLTIP_DELAY_SEC
+                                    ):
+                                        dpg.add_text(
+                                            """Shows '< LOD' values in cells
+                                                Default: off
+                                            """,
+                                            wrap=400,
                                         )
-                                    with dpg.group(horizontal=True):
-                                        dpg.add_text("to".rjust(4))
-                                        with dpg.tooltip(
-                                            dpg.last_item(), delay=TOOLTIP_DELAY_SEC
-                                        ):
-                                            dpg.add_text(
-                                                "Value of -1 indicates no upper limit (up to last row)",
-                                                wrap=400,
+                                    dpg.add_checkbox(
+                                        default_value=False,
+                                        tag="lod_checkbox",
+                                        callback=self.populate_table,
+                                        enabled=False,
+                                        show=False,
+                                    )
+
+                                with dpg.group(horizontal=True):
+                                    dpg.add_text("Row sum threshold".rjust(LABEL_PAD))
+                                    with dpg.tooltip(
+                                        dpg.last_item(), delay=TOOLTIP_DELAY_SEC
+                                    ):
+                                        dpg.add_text(
+                                            """Sets threshold to filter valid rows.\nCtrl+LMB to edit directly
+                                                Default: 70.0
+                                            """,
+                                            wrap=400,
+                                        )
+                                    dpg.add_slider_float(
+                                        width=-1,
+                                        min_value=0,
+                                        max_value=99,
+                                        default_value=70,
+                                        format="%.1f",
+                                        clamped=True,
+                                        tag="row_threshold_slider",
+                                    )
+
+                                with dpg.group(horizontal=True):
+                                    dpg.add_text("Highlight table".rjust(LABEL_PAD))
+                                    with dpg.tooltip(
+                                        dpg.last_item(), delay=TOOLTIP_DELAY_SEC
+                                    ):
+                                        dpg.add_text(
+                                            """Highlights table cells row-wise based on cell's value relative to row's total (normalized, blue to red from lowest to highest value)
+                                                Default: on
+                                            """,
+                                            wrap=400,
+                                        )
+                                    dpg.add_checkbox(
+                                        tag="table_highlight_checkbox",
+                                        default_value=True,
+                                        callback=self.toggle_highlight_table,
+                                        show=False,
+                                    )
+                                with dpg.group(horizontal=True):
+                                    dpg.add_text("Fill with zeros".rjust(LABEL_PAD))
+                                    with dpg.tooltip(
+                                        dpg.last_item(), delay=TOOLTIP_DELAY_SEC
+                                    ):
+                                        dpg.add_text(
+                                            """Fills empty cells with zeros. Doesn't remove '< LOD' values
+                                                Default: off
+                                            """,
+                                            wrap=400,
+                                        )
+                                    dpg.add_checkbox(
+                                        tag="fill_with_zeros_checkbox",
+                                        default_value=False,
+                                        callback=self.populate_table,
+                                        show=True,
+                                    )
+                                with dpg.group(horizontal=True):
+                                    dpg.add_text("Column preset".rjust(LABEL_PAD))
+                                    with dpg.tooltip(
+                                        dpg.last_item(), delay=TOOLTIP_DELAY_SEC
+                                    ):
+                                        dpg.add_text(
+                                            """Selects a set of columns to be shown:
+                                                            - All elements: show column for every element found in the original table
+                                                            - Non-empty elements: only show columns for elements with at least one value (not zero, empty or '< LOD') in selected rows
+                                                            - Info: show columns with data acquisition information. Empty columns are always shown
+                                                            
+                                                            Columns with error estimates are not included in the table
+                                                            
+                                                                Default: Non-empty elements
+                                                            """,
+                                            wrap=400,
+                                        )
+                                    dpg.add_combo(
+                                        width=-1,
+                                        items=[
+                                            "All elements",
+                                            "Non-empty elements",
+                                            "Info",
+                                        ],
+                                        default_value="Non-empty elements",
+                                        callback=self.populate_table,
+                                        tag="column_preset_combo",
+                                    )
+
+                                with dpg.group(horizontal=True):
+                                    dpg.add_text("Row preset".rjust(LABEL_PAD))
+                                    with dpg.tooltip(
+                                        dpg.last_item(), delay=TOOLTIP_DELAY_SEC
+                                    ):
+                                        dpg.add_text(
+                                            """Selects a set of rows to be shown:
+                                                            - All rows: show all rows, no filters
+                                                            - Non-empty rows: only show rows with at least value in selected columns
+                                                            - Valid rows: show rows, sums of which pass threshold. Max is 100
+                                                            - Valid rows, normalized: show valid rows with values normalized to total
+                                                            
+                                                                Default: Valid rows
+                                                            """,
+                                            wrap=400,
+                                        )
+                                    dpg.add_combo(
+                                        width=-1,
+                                        items=[
+                                            "All rows",
+                                            "Non-empty rows",
+                                            "Valid rows",
+                                            "Valid rows, normalized",
+                                        ],
+                                        default_value="Valid rows, normalized",
+                                        callback=self.populate_table,
+                                        tag="row_preset_combo",
+                                    )
+
+                                with dpg.group(horizontal=True):
+                                    dpg.add_text("File range".rjust(LABEL_PAD))
+                                    with dpg.tooltip(
+                                        dpg.last_item(), delay=TOOLTIP_DELAY_SEC
+                                    ):
+                                        dpg.add_text(
+                                            "Select rows with first column [File #] value within the range",
+                                            wrap=400,
+                                        )
+                                    with dpg.group(horizontal=False):
+                                        with dpg.group(horizontal=True):
+                                            dpg.add_text("from".rjust(4))
+                                            dpg.add_input_int(
+                                                tag="from",
+                                                width=-1,
+                                                max_value=10000,
+                                                min_value=1,
+                                                min_clamped=True,
+                                                max_clamped=True,
+                                                default_value=2100,
+                                                on_enter=True,
+                                                callback=self.populate_table,
                                             )
-                                        dpg.add_input_int(
-                                            tag="to",
-                                            width=-1,
-                                            max_value=10000,
-                                            min_value=-1,
-                                            default_value=-1,
-                                            min_clamped=True,
-                                            max_clamped=True,
-                                            on_enter=True,
-                                            callback=self.populate_table,
-                                        )
-                            with dpg.group(horizontal=True):
-                                dpg.add_text("Table dimensions".rjust(LABEL_PAD))
-                                dpg.add_text(
-                                    default_value="(0, 0)", tag="table_dimensions"
-                                )
+                                        with dpg.group(horizontal=True):
+                                            dpg.add_text("to".rjust(4))
+                                            with dpg.tooltip(
+                                                dpg.last_item(), delay=TOOLTIP_DELAY_SEC
+                                            ):
+                                                dpg.add_text(
+                                                    "Value of -1 indicates no upper limit (up to last row)",
+                                                    wrap=400,
+                                                )
+                                            dpg.add_input_int(
+                                                tag="to",
+                                                width=-1,
+                                                max_value=10000,
+                                                min_value=-1,
+                                                default_value=-1,
+                                                min_clamped=True,
+                                                max_clamped=True,
+                                                on_enter=True,
+                                                callback=self.populate_table,
+                                            )
+                                with dpg.group(horizontal=True):
+                                    dpg.add_text("Table dimensions".rjust(LABEL_PAD))
+                                    dpg.add_text(
+                                        default_value="(0, 0)", tag="table_dimensions"
+                                    )
 
                 with dpg.child_window(border=False, width=-1, tag="data"):
                     with dpg.collapsing_header(
@@ -1340,7 +1452,7 @@ class UI:
                                     )
                                 dpg.add_checkbox(default_value=True)
                             with dpg.group(horizontal=True):
-                                dpg.add_text(".pdz folder name".ljust(28))
+                                dpg.add_text(".pdz directory name".ljust(28))
                                 with dpg.tooltip(
                                     dpg.last_item(), delay=TOOLTIP_DELAY_SEC
                                 ):
@@ -1350,7 +1462,7 @@ class UI:
                                     )
                                 dpg.add_input_text(default_value="DATA", width=200)
                             with dpg.group(horizontal=True):
-                                dpg.add_text("Results table name".ljust(28))
+                                dpg.add_text("Results table filename".ljust(28))
                                 with dpg.tooltip(
                                     dpg.last_item(), delay=TOOLTIP_DELAY_SEC
                                 ):
@@ -1416,6 +1528,52 @@ class UI:
                                     default_value=".csv",
                                     width=200,
                                 )
+
+            w, h = dpg.get_viewport_width(), dpg.get_viewport_height()
+            with dpg.window(
+                modal=True,
+                no_background=True,
+                no_move=True,
+                no_scrollbar=True,
+                no_title_bar=True,
+                no_close=True,
+                no_resize=True,
+                tag="loading_indicator",
+                show=False,
+                pos=(w // 2 - 100, h // 2 - 100),
+            ):
+                dpg.add_loading_indicator(radius=20)
+                dpg.add_button(
+                    indent=30,
+                    tag="loading_indicator_message",
+                )
+                dpg.bind_item_theme(dpg.last_item(), self.button_theme)
+
+            with dpg.window(
+                modal=True,
+                no_move=True,
+                no_scrollbar=True,
+                no_title_bar=True,
+                no_close=True,
+                no_resize=True,
+                tag="save_pdz_modal",
+                width=700,
+                height=400,
+                pos=(w // 2 - 350, h // 2 - 200),
+                show=False,
+            ):
+                dpg.add_text("Saving 10 .pdz files to:", tag="save_pdz_count")
+                dpg.add_input_text(default_value="", tag="save_pdz_dir", width=-1)
+                with dpg.group(horizontal=True):
+                    dpg.add_button(
+                        label="OK",
+                        callback=lambda: self.save_pdz_data(
+                            Path(dpg.get_value("save_pdz_dir"))
+                        ),
+                    )
+                    dpg.add_button(
+                        label="Cancel", callback=lambda: dpg.hide_item("save_pdz_modal")
+                    )
 
     def show_settings_modal(self):
         w, h = dpg.get_viewport_width(), dpg.get_viewport_height()
