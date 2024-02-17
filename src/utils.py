@@ -514,6 +514,9 @@ RESULTS_INFO = [
 ]
 FMTS = Literal["B", "h", "i", "I", "f", "s", "10", "5"]
 ID_COL = "File #"
+TOOLTIP_DELAY_SEC = 0.1
+EMPTY_CELL_COLOR = [0.0, 0.0, 170.0000050663948, 20.0]
+
 
 COLUMN_PRESETS: dict[str, list[tuple[list[str] | Literal["empty"], bool]]] = {
     "Info": [
