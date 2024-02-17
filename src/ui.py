@@ -157,6 +157,7 @@ class UI:
     def confirm_pdz_export(self):
         if dpg.is_item_visible("save_pdz_modal"):
             self.save_pdz_data(Path(dpg.get_value("save_pdz_dir")))
+        dpg.hide_item("save_pdz_modal")
 
     def setup_handler_registries(self):
         with dpg.handler_registry():
@@ -591,11 +592,12 @@ class UI:
 
         selections_total = len(self.table_data.selections)
 
+        print(self.table_data.selections)
         for i, s in enumerate(self.table_data.selections):
             yield (i / selections_total - 1) * 100
             pdz = self.plot_data.pdz_data.get(s, None)
             if pdz is None:
-                return
+                continue
             data = pdz.plot_data
             df = pd.DataFrame(data.T)
             filename = "".join(pdz.name.split(".")[:-1])
@@ -1575,12 +1577,7 @@ class UI:
                 dpg.add_text("Saving 10 .pdz files to:", tag="save_pdz_count")
                 dpg.add_input_text(default_value="", tag="save_pdz_dir", width=-1)
                 with dpg.group(horizontal=True):
-                    dpg.add_button(
-                        label="OK",
-                        callback=lambda: self.save_pdz_data(
-                            Path(dpg.get_value("save_pdz_dir"))
-                        ),
-                    )
+                    dpg.add_button(label="OK", callback=self.confirm_pdz_export)
                     dpg.add_button(
                         label="Cancel", callback=lambda: dpg.hide_item("save_pdz_modal")
                     )
