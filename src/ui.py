@@ -261,11 +261,11 @@ class UI:
     def setup_dev(self):
         self.pdz_file_dialog_callback(
             "",
-            {"file_path_name": "/home/puglet5/Sync/XRF/Data"},
+            {"file_path_name": "/home/puglet5/Sync/ITMO/XRF/Data"},
         )
         self.csv_file_dialog_callback(
             "",
-            {"selections": {"1": "/home/puglet5/Sync/XRF/Data/Results.csv"}},
+            {"selections": {"1": "/home/puglet5/Sync/ITMO/XRF/Data/Results.csv"}},
         )
 
     def csv_file_dialog_callback(self, _sender, app_data: dict):

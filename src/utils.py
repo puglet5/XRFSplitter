@@ -536,10 +536,6 @@ COLUMN_PRESETS: dict[str, list[tuple[list[str] | Literal["empty"], bool]]] = {
     ],
 }
 
-T = TypeVar("T")
-P = ParamSpec("P")
-
-
 def element_z_to_symbol(z: int) -> str | None:
     if z == 0:
         return ""
@@ -558,7 +554,7 @@ def element_z_to_name(z) -> str | None:
         return None
 
 
-def log_exec_time(f: Callable[P, T]) -> Callable[P, T]:
+def log_exec_time[T, **P](f: Callable[P, T]) -> Callable[P, T]:
     @wraps(f)
     def _wrapper(*args, **kwargs):
         start_time = time.perf_counter()
@@ -569,9 +565,9 @@ def log_exec_time(f: Callable[P, T]) -> Callable[P, T]:
     return _wrapper  # type:ignore
 
 
-def progress_bar(
-    f: Callable[P, Generator[float, None, None]]
-) -> Callable[P, T]:  # type:ignore
+def progress_bar[
+    T, **P
+](f: Callable[P, Generator[float, None, None]]) -> Callable[P, T]:  # type:ignore
     @wraps(f)
     def _wrapper(*args, **kwargs):
         progress_generator = f(*args, **kwargs)
@@ -601,9 +597,11 @@ def hide_loading_indicator():
         dpg.hide_item("loading_indicator")
 
 
-def loading_indicator(
-    f: Callable[P, Generator[float | int, Any, Any]], message: str
-) -> Callable[P, Generator[float | int, Any, Any]]:  # type:ignore
+def loading_indicator[
+    T, **P
+](f: Callable[P, Generator[float | int, Any, Any]], message: str) -> Callable[
+    P, Generator[float | int, Any, Any]
+]:  # type:ignore
     @wraps(f)
     def _wrapper(*args, **kwargs):
         dpg.configure_item("loading_indicator_message", label=message.center(30))
