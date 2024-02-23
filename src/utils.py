@@ -536,6 +536,7 @@ COLUMN_PRESETS: dict[str, list[tuple[list[str] | Literal["empty"], bool]]] = {
     ],
 }
 
+
 def element_z_to_symbol(z: int) -> str | None:
     if z == 0:
         return ""

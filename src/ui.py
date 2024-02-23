@@ -147,12 +147,10 @@ class UI:
 
     def save_state_init(self, path: str):
         dpg.save_init_file(path)
-    
-    def load_state_json(self):
-        ...
 
-    def save_state_json(self):
-        ...
+    def load_state_json(self): ...
+
+    def save_state_json(self): ...
 
     def confirm_pdz_export(self):
         if dpg.is_item_visible("save_pdz_modal"):
