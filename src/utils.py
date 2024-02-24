@@ -567,10 +567,12 @@ def log_exec_time[T, **P](f: Callable[P, T]) -> Callable[P, T]:
 
 
 def progress_bar[
-    T, **P
-](f: Callable[P, Generator[float, None, None]]) -> Callable[P, T]:  # type:ignore
+    _, **P
+](f: Callable[P, Generator[float, None, None]]) -> Callable[
+    P, Generator[float, None, None]
+]:
     @wraps(f)
-    def _wrapper(*args, **kwargs):
+    def _wrapper(*args, **kwargs) -> Callable[P, Generator[float, None, None]] | None:
         progress_generator = f(*args, **kwargs)
         try:
             while True:
@@ -599,10 +601,10 @@ def hide_loading_indicator():
 
 
 def loading_indicator[
-    T, **P
+    _, **P
 ](f: Callable[P, Generator[float | int, Any, Any]], message: str) -> Callable[
     P, Generator[float | int, Any, Any]
-]:  # type:ignore
+]:
     @wraps(f)
     def _wrapper(*args, **kwargs):
         dpg.configure_item("loading_indicator_message", label=message.center(30))
@@ -930,12 +932,19 @@ class PlotData:
         plt.clf()
 
 
+class Comment(TypedDict):
+    cell_id: int
+    comment: str
+    append_to_filename: bool
+
+
 @define
 class TableData:
     path: str | Path
     original: DataFrame = field(init=False)
     current: DataFrame = field(init=False)
     selections: dict[str, int] = field(init=False)
+    comments: dict[str, Comment] = field(init=False, factory=dict)
     shown_cols: list[str] = field(init=False)
     shown_rows: list[str] = field(init=False)
     empty_cols: list[str] = field(init=False)

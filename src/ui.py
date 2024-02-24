@@ -21,6 +21,7 @@ from src.utils import (
     RESULTS_INFO,
     TABLE_SIZE_APPROXIMATION_FACTOR_KB,
     TOOLTIP_DELAY_SEC,
+    Comment,
     PDZFile,
     PlotData,
     TableData,
@@ -29,7 +30,7 @@ from src.utils import (
     logger,
     progress_bar,
 )
-
+from zipfile import ZipFile
 
 @define
 class UI:
@@ -45,6 +46,8 @@ class UI:
     global_theme: int = field(init=False, default=0)
     button_theme: int = field(init=False, default=0)
     pca_theme: int = field(init=False, default=0)
+    comment_present_theme: int = field(init=False, default=0)
+    comment_absent_theme: int = field(init=False, default=0)
 
     def __attrs_post_init__(self):
         self.setup_settings()
@@ -144,6 +147,24 @@ class UI:
                     (37, 37, 38, -255),
                     category=dpg.mvThemeCat_Core,
                 )
+                dpg.add_theme_style(
+                    dpg.mvStyleVar_FrameBorderSize, 0, category=dpg.mvThemeCat_Core
+                )
+
+        with dpg.theme() as self.comment_present_theme:
+            with dpg.theme_component(dpg.mvSelectable):
+                dpg.add_theme_color(
+                    dpg.mvThemeCol_Text,
+                    (0, 255, 0, 255),
+                    category=dpg.mvThemeCat_Core,
+                )
+        with dpg.theme() as self.comment_absent_theme:
+            with dpg.theme_component(dpg.mvSelectable):
+                dpg.add_theme_color(
+                    dpg.mvThemeCol_Text,
+                    (255, 255, 255, 255),
+                    category=dpg.mvThemeCat_Core,
+                )
 
     def save_state_init(self, path: str):
         dpg.save_init_file(path)
@@ -157,6 +178,11 @@ class UI:
             self.save_pdz_data(Path(dpg.get_value("save_pdz_dir")))
         dpg.hide_item("save_pdz_modal")
 
+    def confirm_table_export(self):
+        if dpg.is_item_visible("save_table_modal"):
+            self.save_table_data(Path(dpg.get_value("save_table_dir")))
+        dpg.hide_item("save_table_modal")
+
     def setup_handler_registries(self):
         with dpg.handler_registry():
             dpg.add_key_down_handler(dpg.mvKey_Control, callback=self.on_key_ctrl)
@@ -164,10 +190,16 @@ class UI:
             dpg.add_key_down_handler(
                 dpg.mvKey_Return, callback=lambda: self.confirm_pdz_export()
             )
-            # dpg.add_mouse_move_handler(callback=mouse_move_callback)
+            dpg.add_key_press_handler(
+                dpg.mvKey_F11, callback=dpg.toggle_viewport_fullscreen
+            )
 
-        with dpg.item_handler_registry(tag="row_hover_handler"):
+        with dpg.item_handler_registry(tag="row_handler"):
             dpg.add_item_hover_handler(callback=self.row_hover_callback)
+            dpg.add_item_clicked_handler(
+                button=dpg.mvMouseButton_Right,
+                callback=lambda s, d: self.row_rmb_callback(s, d),
+            )
 
         with dpg.item_handler_registry(tag="collapsible_clicked_handler"):
             dpg.add_item_clicked_handler(callback=self.collapsible_clicked_callback)
@@ -181,11 +213,68 @@ class UI:
         with dpg.item_handler_registry(tag="settings_row_threshold_handler"):
             dpg.add_item_deactivated_after_edit_handler(callback=self.populate_table)
 
+    def handle_comment(self, label: str, cell: int):
+        text = dpg.get_value(f"{label}_comment_text")
+        if text is None or text.strip() == "":
+            comment = self.table_data.comments.get(label, None)
+            if comment is None:
+                return
+
+            self.table_data.comments.pop(label, None)
+            dpg.bind_item_theme(cell, self.comment_absent_theme)
+            return
+
+        self.table_data.comments[label] = {
+            "cell_id": cell,
+            "comment": text,
+            "append_to_filename": dpg.get_value(f"{label}_comment_append"),
+        }
+
+        dpg.bind_item_theme(cell, self.comment_present_theme)
+
+    def row_rmb_callback(self, s, d):
+        cell = d[1]
+        label = dpg.get_item_label(cell)
+        if label is None:
+            return
+
+        if dpg.does_item_exist(f"{label}_comments"):
+            dpg.show_item(f"{label}_comments")
+            return
+
+        with dpg.window(
+            no_title_bar=True,
+            no_open_over_existing_popup=True,
+            popup=True,
+            menubar=True,
+            tag=f"{label}_comments",
+        ):
+            with dpg.menu_bar():
+                dpg.add_menu(label=f"{label}", enabled=False)
+
+            with dpg.group():
+                dpg.add_text("Comments")
+                dpg.add_input_text(
+                    hint="Comments",
+                    multiline=True,
+                    tag=f"{label}_comment_text",
+                    callback=lambda: self.handle_comment(label, cell),
+                )
+            with dpg.group(horizontal=True):
+                dpg.add_checkbox(
+                    default_value=False,
+                    tag=f"{label}_comment_append",
+                    callback=lambda: self.handle_comment(label, cell),
+                )
+                dpg.add_text("Append to filename")
+
     def hide_modals(self):
         if dpg.is_item_visible("settings_modal"):
             dpg.hide_item("settings_modal")
         if dpg.is_item_visible("save_pdz_modal"):
             dpg.hide_item("save_pdz_modal")
+        if dpg.is_item_visible("save_table_modal"):
+            dpg.hide_item("save_table_modal")
 
     def bind_item_handlers(self):
         dpg.bind_theme(self.global_theme)
@@ -373,7 +462,11 @@ class UI:
             dpg.delete_item(plot_label)
 
     def row_hover_callback(self, _sender, row):
-        row_label = dpg.get_item_label(row)
+        try:
+            row_label = dpg.get_item_label(row)
+        except Exception:
+            return
+
         if row_label is None:
             return
 
@@ -433,11 +526,13 @@ class UI:
             w, h = dpg.get_viewport_width(), dpg.get_viewport_height()
             dpg.configure_item("settings_modal", pos=[w // 2 - 350, h // 2 - 200])
 
+        w, h = dpg.get_viewport_width(), dpg.get_viewport_height()
         if dpg.is_item_visible("save_pdz_modal"):
-            w, h = dpg.get_viewport_width(), dpg.get_viewport_height()
             dpg.configure_item("save_pdz_modal", pos=[w // 2 - 350, h // 2 - 200])
 
-        w, h = dpg.get_viewport_width(), dpg.get_viewport_height()
+        if dpg.is_item_visible("save_table_modal"):
+            dpg.configure_item("save_table_modal", pos=[w // 2 - 350, h // 2 - 200])
+
         if dpg.does_item_exist("loading_indicator"):
             dpg.configure_item("loading_indicator", pos=(w // 2 - 100, h // 2 - 100))
 
@@ -530,6 +625,8 @@ class UI:
             dpg.destroy_context()
         if dpg.is_key_pressed(dpg.mvKey_S):
             self.prompt_pdz_data_save()
+        if dpg.is_key_pressed(dpg.mvKey_T):
+            self.prompt_table_save()
 
         if dpg.is_key_pressed(dpg.mvKey_C):
             if self.table_data.selections:
@@ -577,8 +674,28 @@ class UI:
                 f"Saving {selections_total - invalid_pdzs_total} (exluding {invalid_pdzs_total} invalid) .pdz files to:",
             )
 
+        w, h = dpg.get_viewport_width(), dpg.get_viewport_height()
+        dpg.configure_item("save_pdz_modal", pos=[w // 2 - 350, h // 2 - 200])
+
         dpg.set_value("save_pdz_dir", f"{Path('./').absolute()}")
         dpg.show_item("save_pdz_modal")
+
+        selected_labels = list(self.table_data.selections.keys())
+        try:
+            selected_labels_int = [int(l) for l in selected_labels]
+        except ValueError:
+            return
+        min_selection = min(selected_labels_int)
+        max_selection = max(selected_labels_int)
+        dpg.set_value(
+            "save_pdz_archive_filename", f"pdz_exported_{min_selection}-{max_selection}"
+        )
+
+    def prompt_table_save(self):
+        w, h = dpg.get_viewport_width(), dpg.get_viewport_height()
+        dpg.configure_item("save_table_modal", pos=[w // 2 - 350, h // 2 - 200])
+        dpg.show_item("save_table_modal")
+        dpg.set_value("save_table_dir", f"{Path('./').absolute()}")
 
     @partial(loading_indicator, message="Exporting spectra")
     def save_pdz_data(self, directory: Path):
@@ -590,16 +707,70 @@ class UI:
 
         selections_total = len(self.table_data.selections)
 
-        print(self.table_data.selections)
-        for i, s in enumerate(self.table_data.selections):
-            yield (i / selections_total) * 100
-            pdz = self.plot_data.pdz_data.get(s, None)
-            if pdz is None:
-                continue
-            data = pdz.plot_data
-            df = pd.DataFrame(data.T)
-            filename = "".join(pdz.name.split(".")[:-1])
-            df.to_csv(f"{directory}/{filename}.csv", index=False, header=False)
+        fmt = dpg.get_value("save_pdz_format")
+        archive: bool = dpg.get_value("save_pdz_archive")
+
+        if not archive:
+            for i, s in enumerate(self.table_data.selections):
+                yield (i / selections_total) * 100
+                pdz = self.plot_data.pdz_data.get(s, None)
+                if pdz is None:
+                    continue
+                data = pdz.plot_data
+                df = pd.DataFrame(data.T)
+                filename = "".join(pdz.name.split(".")[:-1])
+
+                if fmt == ".csv":
+                    df.to_csv(f"{directory}/{filename}.csv", index=False, header=False)
+                elif fmt == ".xlsx":
+                    df.to_excel(
+                        f"{directory}/{filename}.xlsx", index=False, header=False
+                    )
+        else:
+            archive_filename = dpg.get_value("save_pdz_archive_filename")
+            with ZipFile(f"{directory}/{archive_filename}.zip", "w") as zf:
+                for i, s in enumerate(self.table_data.selections):
+                    yield (i / selections_total) * 100
+                    pdz = self.plot_data.pdz_data.get(s, None)
+                    if pdz is None:
+                        continue
+
+                    data = pdz.plot_data
+                    df = pd.DataFrame(data.T)
+                    filename = "".join(pdz.name.split(".")[:-1])
+
+                    if fmt == ".csv":
+                        with zf.open(f"{filename}.csv", "w") as buffer:
+                            df.to_csv(buffer, index=False, header=False)
+                    elif fmt == ".xlsx":
+                        with zf.open(f"{filename}.xlsx", "w") as buffer:
+                            df.to_excel(buffer, index=False, header=False)
+
+    @partial(loading_indicator, message="Exporting table")
+    def save_table_data(self, directory: Path):
+        yield 1.0
+        if dpg.is_item_visible("save_table_modal"):
+            dpg.hide_item("save_table_modal")
+
+        if not directory.is_dir():
+            directory.mkdir(parents=True, exist_ok=True)
+
+        selected_rows = self.table_data.current
+        fmt = dpg.get_value("save_table_format")
+
+        if fmt == ".csv":
+            selected_rows.to_csv(
+                f"{directory.absolute()}/results_exported.csv",
+                header=True,
+                index=False,
+                encoding="utf8",
+            )
+        elif fmt == ".xlsx":
+            selected_rows.to_excel(
+                f"{directory.absolute()}/results_exported.xlsx",
+                header=True,
+                index=False,
+            )
 
     @log_exec_time
     @progress_bar
@@ -617,6 +788,11 @@ class UI:
                     self.row_select_callback(
                         cell, True, check_keys=False, propagate=False
                     )
+
+        dpg.set_value(
+            "table_selections",
+            f"{len(self.table_data.selections)}",
+        )
 
     def pca_plot_is_visible(self):
         return dpg.get_frame_count() - self.pca_plot_last_frame_visible < 10
@@ -677,7 +853,6 @@ class UI:
             return
 
         selections = self.table_data.selections
-        dpg.bind_item_handler_registry(cell, 0)
 
         with dpg.mutex():
             if value:
@@ -706,6 +881,11 @@ class UI:
                             self.update_pca_plot()
                     else:
                         self.remove_pca_plot()
+
+        dpg.set_value(
+            "table_selections",
+            f"{len(self.table_data.selections)}",
+        )
 
     @log_exec_time
     def prepare_data(self):
@@ -755,6 +935,8 @@ class UI:
     @log_exec_time
     @progress_bar
     def populate_table(self, skip_equals_check=False):
+        dpg.hide_item("row_handler")
+
         if not skip_equals_check:
             pre = self.table_data.current.copy()
             self.prepare_data()
@@ -781,6 +963,7 @@ class UI:
                 )
 
             selections = self.table_data.selections
+            comments = self.table_data.comments
 
             row_n = arr.shape[0]
             for i in range(row_n):
@@ -788,11 +971,15 @@ class UI:
                 row_id = uuid.uuid4().int & (1 << 64) - 1
                 first_cell_label = arr[i, 0]
                 is_previously_selected = first_cell_label in selections
+                is_previously_commented = first_cell_label in comments
                 if is_previously_selected:
                     self.last_row_selected = row_id
                     first_cell_id = selections[first_cell_label]
                 else:
-                    first_cell_id = uuid.uuid4().int & (1 << 64) - 1
+                    if is_previously_commented:
+                        first_cell_id = comments[first_cell_label]["cell_id"]
+                    else:
+                        first_cell_id = uuid.uuid4().int & (1 << 64) - 1
 
                 with dpg.table_row(
                     parent=self.table_tag, tag=row_id, user_data=first_cell_id
@@ -804,7 +991,9 @@ class UI:
                         callback=lambda s, a: self.row_select_callback(s, a),
                         tag=first_cell_id,
                     )
-                    dpg.bind_item_handler_registry(dpg.last_item(), 0)
+                    dpg.bind_item_handler_registry(first_cell_id, "row_handler")
+                    if is_previously_commented:
+                        dpg.bind_item_theme(first_cell_id, self.comment_present_theme)
 
                     for j in range(1, arr.shape[1]):
                         dpg.add_selectable(label=arr[i, j])
@@ -822,6 +1011,13 @@ class UI:
                 f"{self.table_data.current.shape}, apx. {self.table_data.current.memory_usage(index=True, deep=True).sum()/TABLE_SIZE_APPROXIMATION_FACTOR_KB:.0f} kB",
             )
 
+            dpg.set_value(
+                "table_selections",
+                f"{len(self.table_data.selections)}",
+            )
+
+        dpg.show_item("row_handler")
+
     @progress_bar
     def deselect_all_rows(self):
         cells = list(self.table_data.selections.values())
@@ -834,6 +1030,11 @@ class UI:
         self.table_data.selections = {}
         self.clear_plots()
         gc.collect()
+
+        dpg.set_value(
+            "table_selections",
+            f"{len(self.table_data.selections)}",
+        )
 
     def remove_pca_plot(self):
         if self.plot_data.pca_data is not None:
@@ -889,9 +1090,6 @@ class UI:
         dpg.configure_item("pca_x_axis", label=f"PC1 ({variance[0]/sum*100:,.2f}%)")
         dpg.configure_item("pca_y_axis", label=f"PC2 ({variance[1]/sum*100:,.2f}%)")
 
-        for row in self.table_data.selections.values():
-            dpg.bind_item_handler_registry(row, "row_hover_handler")
-
         # dpg.fit_axis_data("pca_x_axis")
         # dpg.fit_axis_data("pca_y_axis")
 
@@ -905,9 +1103,15 @@ class UI:
             with dpg.menu_bar(tag="menu_bar"):
                 with dpg.menu(label="File"):
                     dpg.add_menu_item(
-                        label="Save",
+                        label="Save spectra",
                         shortcut="(Ctrl+S)",
                         callback=self.prompt_pdz_data_save,
+                    )
+
+                    dpg.add_menu_item(
+                        label="Save table",
+                        shortcut="(Ctrl+T)",
+                        callback=self.prompt_table_save,
                     )
 
                 with dpg.menu(label="Edit"):
@@ -929,8 +1133,8 @@ class UI:
                     )
                     dpg.add_menu_item(
                         label="Toggle Fullscreen",
-                        shortcut="(Win+F)",
-                        callback=lambda: dpg.toggle_viewport_fullscreen(),
+                        shortcut="(F11)",
+                        callback=dpg.toggle_viewport_fullscreen,
                     )
                 with dpg.menu(label="Tools"):
                     with dpg.menu(label="Developer"):
@@ -1165,9 +1369,14 @@ class UI:
                                                 on_enter=True,
                                             )
                                 with dpg.group(horizontal=True):
-                                    dpg.add_text("Table dimensions".rjust(LABEL_PAD))
+                                    dpg.add_text("Table dimensions:".rjust(LABEL_PAD))
                                     dpg.add_text(
                                         default_value="(0, 0)", tag="table_dimensions"
+                                    )
+                                with dpg.group(horizontal=True):
+                                    dpg.add_text("Selected rows:".rjust(LABEL_PAD))
+                                    dpg.add_text(
+                                        default_value="None", tag="table_selections"
                                     )
 
                 with dpg.child_window(border=False, width=-1, tag="data"):
@@ -1575,9 +1784,65 @@ class UI:
                 dpg.add_text("Saving 10 .pdz files to:", tag="save_pdz_count")
                 dpg.add_input_text(default_value="", tag="save_pdz_dir", width=-1)
                 with dpg.group(horizontal=True):
+                    dpg.add_text("Format".ljust(LABEL_PAD))
+                    dpg.add_combo(
+                        items=[".csv", ".xlsx"],
+                        default_value=".csv",
+                        tag="save_pdz_format",
+                        width=80,
+                    )
+                with dpg.group(horizontal=True):
+                    dpg.add_text("Archive".ljust(LABEL_PAD))
+                    dpg.add_checkbox(
+                        default_value=False,
+                        tag="save_pdz_archive",
+                    )
+                    dpg.add_input_text(
+                        default_value="pdz_exported",
+                        tag="save_pdz_archive_filename",
+                        width=200,
+                    )
+                    dpg.add_text(
+                        default_value=".zip",
+                    )
+
+                with dpg.group(horizontal=True):
                     dpg.add_button(label="OK", callback=self.confirm_pdz_export)
                     dpg.add_button(
                         label="Cancel", callback=lambda: dpg.hide_item("save_pdz_modal")
+                    )
+
+            with dpg.window(
+                modal=True,
+                no_move=True,
+                no_scrollbar=True,
+                no_title_bar=True,
+                no_close=True,
+                no_resize=True,
+                tag="save_table_modal",
+                width=700,
+                height=400,
+                pos=(w // 2 - 350, h // 2 - 200),
+                show=False,
+            ):
+                dpg.add_text("Saving results table (shown rows only) to:")
+                dpg.add_input_text(default_value="", tag="save_table_dir", width=-1)
+                with dpg.group(horizontal=True):
+                    dpg.add_text("Format".ljust(LABEL_PAD))
+                    dpg.add_combo(
+                        items=[".csv", ".xlsx"],
+                        default_value=".csv",
+                        tag="save_table_format",
+                        width=80,
+                    )
+                with dpg.group(horizontal=True):
+                    dpg.add_text("Include comments".ljust(LABEL_PAD))
+                    dpg.add_checkbox(default_value=True, tag="save_table_comments")
+                with dpg.group(horizontal=True):
+                    dpg.add_button(label="OK", callback=self.confirm_table_export)
+                    dpg.add_button(
+                        label="Cancel",
+                        callback=lambda: dpg.hide_item("save_table_modal"),
                     )
 
     def show_settings_modal(self):

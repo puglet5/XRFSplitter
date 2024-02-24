@@ -15,6 +15,7 @@ scikit-learn = "*"
 matplotlib = "*"
 pyarrow = "*"
 attrs = "*"
+openpyxl = "*"
 
 [dev-packages]
 black = "*"
