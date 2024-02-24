@@ -262,7 +262,7 @@ class UI:
                 )
             with dpg.group(horizontal=True):
                 dpg.add_checkbox(
-                    default_value=False,
+                    default_value=True,
                     tag=f"{label}_comment_append",
                     callback=lambda: self.handle_comment(label, cell),
                 )
@@ -687,9 +687,11 @@ class UI:
             return
         min_selection = min(selected_labels_int)
         max_selection = max(selected_labels_int)
-        dpg.set_value(
-            "save_pdz_archive_filename", f"pdz_exported_{min_selection}-{max_selection}"
-        )
+        if min_selection == max_selection:
+            append = f"{min_selection}"
+        else:
+            append = f"{min_selection}-{max_selection}"
+        dpg.set_value("save_pdz_archive_filename", f"pdz_exported_{append}")
 
     def prompt_table_save(self):
         w, h = dpg.get_viewport_width(), dpg.get_viewport_height()
@@ -711,14 +713,20 @@ class UI:
         archive: bool = dpg.get_value("save_pdz_archive")
 
         if not archive:
-            for i, s in enumerate(self.table_data.selections):
+            for i, label in enumerate(self.table_data.selections):
                 yield (i / selections_total) * 100
-                pdz = self.plot_data.pdz_data.get(s, None)
+                pdz = self.plot_data.pdz_data.get(label, None)
                 if pdz is None:
                     continue
                 data = pdz.plot_data
                 df = pd.DataFrame(data.T)
                 filename = "".join(pdz.name.split(".")[:-1])
+                if dpg.does_item_exist(f"{label}_comment_append"):
+                    if dpg.get_value(f"{label}_comment_append"):
+                        if (
+                            comment := self.table_data.comments.get(label, None)
+                        ) is not None:
+                            filename = f"{filename}_{comment['comment']}"
 
                 if fmt == ".csv":
                     df.to_csv(f"{directory}/{filename}.csv", index=False, header=False)
@@ -729,9 +737,9 @@ class UI:
         else:
             archive_filename = dpg.get_value("save_pdz_archive_filename")
             with ZipFile(f"{directory}/{archive_filename}.zip", "w") as zf:
-                for i, s in enumerate(self.table_data.selections):
+                for i, label in enumerate(self.table_data.selections):
                     yield (i / selections_total) * 100
-                    pdz = self.plot_data.pdz_data.get(s, None)
+                    pdz = self.plot_data.pdz_data.get(label, None)
                     if pdz is None:
                         continue
 
@@ -755,18 +763,45 @@ class UI:
         if not directory.is_dir():
             directory.mkdir(parents=True, exist_ok=True)
 
-        selected_rows = self.table_data.current
+        rows = dpg.get_value("save_table_rows")
+        comments_column_posiotion = dpg.get_value("save_table_comments_column_position")
+
+        if comments_column_posiotion == "First":
+            comments_column_index = 0
+        elif comments_column_posiotion == "Second":
+            comments_column_index = 1
+        elif comments_column_posiotion == "Last":
+            comments_column_index = -1
+
+        if rows == "Visible":
+            table = self.table_data.current
+            data = self.table_data.generate_table_with_comments(
+                table, comments_column_index
+            )
+        else:  # selected only
+            if self.table_data.selections:
+                table = self.table_data.current[
+                    self.table_data.current[ID_COL].isin(
+                        values=self.table_data.selections
+                    )
+                ]
+                data = self.table_data.generate_table_with_comments(
+                    table, comments_column_index
+                )
+            else:
+                return
+
         fmt = dpg.get_value("save_table_format")
 
         if fmt == ".csv":
-            selected_rows.to_csv(
+            data.to_csv(
                 f"{directory.absolute()}/results_exported.csv",
                 header=True,
                 index=False,
                 encoding="utf8",
             )
         elif fmt == ".xlsx":
-            selected_rows.to_excel(
+            data.to_excel(
                 f"{directory.absolute()}/results_exported.xlsx",
                 header=True,
                 index=False,
@@ -1825,19 +1860,35 @@ class UI:
                 pos=(w // 2 - 350, h // 2 - 200),
                 show=False,
             ):
-                dpg.add_text("Saving results table (shown rows only) to:")
+                dpg.add_text("Saving results table to:")
                 dpg.add_input_text(default_value="", tag="save_table_dir", width=-1)
+                with dpg.group(horizontal=True):
+                    dpg.add_text("Rows".ljust(LABEL_PAD))
+                    dpg.add_combo(
+                        items=["Selected only", "Visible"],
+                        default_value="Visible",
+                        tag="save_table_rows",
+                        width=120,
+                    )
                 with dpg.group(horizontal=True):
                     dpg.add_text("Format".ljust(LABEL_PAD))
                     dpg.add_combo(
                         items=[".csv", ".xlsx"],
                         default_value=".csv",
                         tag="save_table_format",
-                        width=80,
+                        width=120,
                     )
                 with dpg.group(horizontal=True):
                     dpg.add_text("Include comments".ljust(LABEL_PAD))
                     dpg.add_checkbox(default_value=True, tag="save_table_comments")
+                with dpg.group(horizontal=True):
+                    dpg.add_text("Comments column pos".ljust(LABEL_PAD))
+                    dpg.add_combo(
+                        default_value="Second",
+                        items=["First", "Second", "Last"],
+                        tag="save_table_comments_column_position",
+                        width=120,
+                    )
                 with dpg.group(horizontal=True):
                     dpg.add_button(label="OK", callback=self.confirm_table_export)
                     dpg.add_button(

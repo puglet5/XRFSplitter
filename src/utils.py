@@ -1224,3 +1224,19 @@ class TableData:
 
     def fill_with_zeros(self):
         self.current = self.current.replace("", "0.0000")
+
+    def generate_table_with_comments(
+        self, df: DataFrame, comments_column_index: int = 0
+    ):
+        comments_data = [
+            self.comments[label]["comment"] if self.comments.get(label, None) else ""
+            for label in df[ID_COL]
+        ]
+        comments_column = pd.Series(comments_data, index=df.index, name="Comments")
+        table_with_comments = df.copy()
+        if comments_column_index == -1:
+            comments_column_index = df.shape[1]
+
+        table_with_comments.insert(comments_column_index, "Comments", comments_column)
+
+        return table_with_comments
