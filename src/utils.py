@@ -882,7 +882,7 @@ class PDZFile:
 
 @define
 class PlotData:
-    pdz_folder: Path
+    pdz_directory: Path
     pdz_data: dict[str, PDZFile] = field(init=False, factory=dict)
     pca_data: npt.NDArray[np.float_] | None = field(
         init=False, factory=lambda: np.array([])

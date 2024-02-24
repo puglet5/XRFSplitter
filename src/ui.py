@@ -892,14 +892,14 @@ class UI:
         with dpg.mutex():
             if value:
 
-                files = list(self.plot_data.pdz_folder.rglob("*.pdz"))
+                files = list(self.plot_data.pdz_directory.rglob("*.pdz"))
 
                 patt = re.compile(f"^([0]+){spectrum_label}-")
                 files_re = [s for s in files if patt.match(s.name)]
                 file = files_re[0] if files_re else None
                 selections[spectrum_label] = cell
                 if file is not None:
-                    path = Path(self.plot_data.pdz_folder, file)
+                    path = Path(self.plot_data.pdz_directory, file)
                     if update_plots == "pdz" or update_plots == "all":
                         self.add_pdz_plot(path, spectrum_label)
                     if update_plots == "pca" or update_plots == "all":
@@ -1208,7 +1208,7 @@ class UI:
                     with dpg.child_window(width=-1, height=60, show=False):
                         with dpg.group(horizontal=True):
                             dpg.add_button(
-                                label="Select spectra folder",
+                                label="Select spectra directory",
                                 callback=lambda: dpg.show_item("pdz_dialog"),
                             )
 
