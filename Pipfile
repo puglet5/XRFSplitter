@@ -6,14 +6,12 @@ name = "pypi"
 [packages]
 pandas = "*"
 numpy = "*"
-usb-monitor = "*"
 xrfsplitter = {file = ".", editable = true}
 coloredlogs = "*"
-dearpygui = "*"
+dearpygui = "==1.11.0"
 scipy = "*"
 scikit-learn = "*"
 matplotlib = "*"
-pyarrow = "*"
 attrs = "*"
 openpyxl = "*"
 
@@ -26,7 +24,6 @@ ipykernel = "*"
 nuitka = "*"
 memory-profiler = "*"
 typing-extensions = "*"
-xdg-base-dirs = "*"
 pip-licenses = "*"
 pylint = "*"
 
