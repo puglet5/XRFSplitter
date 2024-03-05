@@ -20,8 +20,9 @@ from src.utils import (
     RESULT_ELEMENTS,
     RESULTS_INFO,
     TABLE_SIZE_APPROXIMATION_FACTOR_KB,
+    TABLE_TAG,
     TOOLTIP_DELAY_SEC,
-    Comment,
+    WINDOW_TAG,
     PDZFile,
     PlotData,
     TableData,
@@ -32,13 +33,12 @@ from src.utils import (
 )
 from zipfile import ZipFile
 
+
 @define
 class UI:
     settings: Settings = field(init=False)
     table_data: TableData = field(init=False)
     plot_data: PlotData = field(init=False)
-    table_tag: str = field(init=False, default="results_table")
-    window_tag: str = field(init=False, default="primary_window")
     pca_plot_last_frame_visible: int = field(init=False, default=0)
     pdz_plot_last_frame_visible: int = field(init=False, default=0)
     last_row_selected: int = field(init=False, default=0)
@@ -281,7 +281,7 @@ class UI:
         dpg.bind_item_theme("pca_plot", self.pca_theme)
         dpg.bind_item_handler_registry("table_wrapper", "collapsible_clicked_handler")
         dpg.bind_item_handler_registry("plots_wrapper", "collapsible_clicked_handler")
-        dpg.bind_item_handler_registry(self.window_tag, "window_resize_handler")
+        dpg.bind_item_handler_registry(WINDOW_TAG, "window_resize_handler")
         dpg.bind_item_handler_registry("pca_plot", "pca_plot_visible_handler")
         dpg.bind_item_handler_registry(
             self.settings.row_threshold.tag, "settings_row_threshold_handler"
@@ -295,7 +295,7 @@ class UI:
         dpg.setup_dearpygui()
         dpg.show_viewport()
         dpg.set_viewport_vsync(True)
-        dpg.set_primary_window(self.window_tag, True)
+        dpg.set_primary_window(WINDOW_TAG, True)
         try:
             if dev:
                 dpg.set_frame_callback(1, self.setup_dev)
@@ -310,15 +310,15 @@ class UI:
         dpg.destroy_context()
 
     def setup_table(self, csv_path: Path):
-        if dpg.does_item_exist(self.table_tag):
-            dpg.delete_item(self.table_tag)
+        if dpg.does_item_exist(TABLE_TAG):
+            dpg.delete_item(TABLE_TAG)
 
         self.table_data = TableData(csv_path)
 
         dpg.add_table(
             label="Results",
             parent="table_wrapper",
-            tag=self.table_tag,
+            tag=TABLE_TAG,
             header_row=True,
             hideable=False,
             resizable=False,
@@ -343,7 +343,7 @@ class UI:
 
         self.populate_table()
 
-        dpg.configure_item(self.table_tag, sortable=True)
+        dpg.configure_item(TABLE_TAG, sortable=True)
 
     def setup_dev(self):
         self.pdz_file_dialog_callback(
@@ -422,7 +422,7 @@ class UI:
                 if color == EMPTY_CELL_COLOR:
                     continue
 
-                dpg.highlight_table_cell(self.table_tag, row_i, column, color)
+                dpg.highlight_table_cell(TABLE_TAG, row_i, column, color)
 
     def add_pdz_plot(self, path: Path, label: str):
         if dpg.does_item_exist(f"{label}_plot"):
@@ -488,7 +488,7 @@ class UI:
         plots_visible: bool = dpg.get_item_state("plots_wrapper")[
             "clicked"
         ] != dpg.is_item_visible("plots_tabs")
-        table_visible = dpg.is_item_visible(self.table_tag)
+        table_visible = dpg.is_item_visible(TABLE_TAG)
 
         vp_height = dpg.get_viewport_height()
 
@@ -499,14 +499,14 @@ class UI:
         if plots_visible and table_visible:
             dpg.configure_item("pca_plot", height=vp_height // 2)
             dpg.configure_item("pdz_plots", height=vp_height // 2)
-            dpg.configure_item(self.table_tag, height=-1)
+            dpg.configure_item(TABLE_TAG, height=-1)
 
         if not plots_visible and table_visible:
-            dpg.configure_item(self.table_tag, height=-1)
+            dpg.configure_item(TABLE_TAG, height=-1)
 
     def window_resize_callback(self, _sender, _data):
         plots_visible = dpg.is_item_visible("plots_tabs")
-        table_visible = dpg.is_item_visible(self.table_tag)
+        table_visible = dpg.is_item_visible(TABLE_TAG)
 
         vp_height = dpg.get_viewport_height()
 
@@ -517,10 +517,10 @@ class UI:
         if plots_visible and table_visible:
             dpg.configure_item("pca_plot", height=vp_height // 2)
             dpg.configure_item("pdz_plots", height=vp_height // 2)
-            dpg.configure_item(self.table_tag, height=-1)
+            dpg.configure_item(TABLE_TAG, height=-1)
 
         if not plots_visible and table_visible:
-            dpg.configure_item(self.table_tag, height=-1)
+            dpg.configure_item(TABLE_TAG, height=-1)
 
         if dpg.is_item_visible("settings_modal"):
             w, h = dpg.get_viewport_width(), dpg.get_viewport_height()
@@ -555,7 +555,7 @@ class UI:
             self.unhighlight_table()
 
     def unhighlight_table(self):
-        table_children: dict | None = dpg.get_item_children(self.table_tag)  # type: ignore
+        table_children: dict | None = dpg.get_item_children(TABLE_TAG)  # type: ignore
         if table_children is None:
             return
         cols: list[int] = table_children.get(0, [])
@@ -564,14 +564,12 @@ class UI:
         for i, row in enumerate(rows):
             for j, col in enumerate(cols):
                 try:
-                    dpg.unhighlight_table_cell(self.table_tag, i, j)
+                    dpg.unhighlight_table_cell(TABLE_TAG, i, j)
                 except Exception as e:
                     err = e
                     break
         if err is not None:
-            logger.warning(
-                f"Couldn't properly unhighlight table: {self.table_tag}, {err}"
-            )
+            logger.warning(f"Couldn't properly unhighlight table: {TABLE_TAG}, {err}")
 
     def sort_callback(self, _sender: int | str, sort_specs: None | list[list[int]]):
         if sort_specs is None:
@@ -647,8 +645,8 @@ class UI:
                 if dpg.is_key_pressed(dpg.mvKey_M):
                     dpg.show_tool(dpg.mvTool_Metrics)
             elif dpg.is_key_pressed(dpg.mvKey_M):
-                menubar_visible = dpg.get_item_configuration(self.window_tag)["menubar"]
-                dpg.configure_item(self.window_tag, menubar=(not menubar_visible))
+                menubar_visible = dpg.get_item_configuration(WINDOW_TAG)["menubar"]
+                dpg.configure_item(WINDOW_TAG, menubar=(not menubar_visible))
 
     def prompt_pdz_data_save(self):
         selections_total = len(self.table_data.selections)
@@ -810,7 +808,7 @@ class UI:
     @log_exec_time
     @progress_bar
     def select_all_rows(self):
-        rows: list[int] = dpg.get_item_children(self.table_tag, 1)  # type:ignore
+        rows: list[int] = dpg.get_item_children(TABLE_TAG, 1)  # type:ignore
         rows_n = len(rows)
 
         for i, row in enumerate(rows):
@@ -834,7 +832,7 @@ class UI:
 
     @progress_bar
     def ctrl_select_rows(self, row_clicked: int):
-        rows: list[int] = dpg.get_item_children(self.table_tag, 1)  # type:ignore
+        rows: list[int] = dpg.get_item_children(TABLE_TAG, 1)  # type:ignore
         if row_clicked not in rows or self.last_row_selected not in rows:
             return
 
@@ -982,9 +980,9 @@ class UI:
             if self.settings.table_highlighted.value:
                 self.unhighlight_table()
             try:
-                dpg.delete_item(self.table_tag, children_only=True)
+                dpg.delete_item(TABLE_TAG, children_only=True)
             except Exception:
-                logger.warn(f"No table found: {self.table_tag}")
+                logger.warn(f"No table found: {TABLE_TAG}")
 
             arr = self.table_data.current.to_numpy()
             cols = self.table_data.current.columns.tolist()
@@ -992,7 +990,7 @@ class UI:
             for col in cols:
                 dpg.add_table_column(
                     label=col,
-                    parent=self.table_tag,
+                    parent=TABLE_TAG,
                     prefer_sort_ascending=False,
                     prefer_sort_descending=True,
                 )
@@ -1017,7 +1015,7 @@ class UI:
                         first_cell_id = uuid.uuid4().int & (1 << 64) - 1
 
                 with dpg.table_row(
-                    parent=self.table_tag, tag=row_id, user_data=first_cell_id
+                    parent=TABLE_TAG, tag=row_id, user_data=first_cell_id
                 ):
                     dpg.add_selectable(
                         label=first_cell_label,
@@ -1131,7 +1129,7 @@ class UI:
     def setup_layout(self):
         with dpg.window(
             label="xrfsplitter",
-            tag=self.window_tag,
+            tag=WINDOW_TAG,
             horizontal_scrollbar=False,
             no_scrollbar=True,
         ):
@@ -1454,7 +1452,7 @@ class UI:
                     with dpg.group(tag="table_wrapper"):
                         with dpg.table(
                             label="Results table",
-                            tag=self.table_tag,
+                            tag=TABLE_TAG,
                             user_data={},
                             header_row=True,
                             hideable=False,

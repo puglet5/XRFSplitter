@@ -43,9 +43,6 @@ logging.basicConfig(filename=Path(ROOT_DIR, "log/main.log"), filemode="a")
 coloredlogs.install(level="DEBUG")
 logger = logging.getLogger(__name__)
 
-LABEL_PAD = 23
-TABLE_SIZE_APPROXIMATION_FACTOR_KB = 15000
-
 Result = TypedDict(
     "Result",
     {
@@ -516,7 +513,10 @@ FMTS = Literal["B", "h", "i", "I", "f", "s", "10", "5"]
 ID_COL = "File #"
 TOOLTIP_DELAY_SEC = 0.1
 EMPTY_CELL_COLOR = [0.0, 0.0, 170.0000050663948, 20.0]
-
+TABLE_TAG = "results_table"
+WINDOW_TAG = "primary"
+LABEL_PAD = 23
+TABLE_SIZE_APPROXIMATION_FACTOR_KB = 15000
 
 COLUMN_PRESETS: dict[str, list[tuple[list[str] | Literal["empty"], bool]]] = {
     "Info": [
