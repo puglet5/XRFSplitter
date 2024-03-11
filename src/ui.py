@@ -404,7 +404,7 @@ class UI:
 
     def highlight_table(self):
         df = self.table_data.current
-        col_ids = sorted(df.columns.get_loc(c) for c in RESULT_ELEMENTS if c in df)
+        col_ids = sorted(df.columns.get_loc(c) for c in RESULT_ELEMENTS if c in df)  # type: ignore
         arr = df.iloc[:, col_ids].replace(["< LOD", ""], 0).to_numpy().astype(float)
         for row_i, row in enumerate(arr):
             if len(row) == 0:
