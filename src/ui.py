@@ -522,11 +522,10 @@ class UI:
         if not plots_visible and table_visible:
             dpg.configure_item(TABLE_TAG, height=-1)
 
+        w, h = dpg.get_viewport_width(), dpg.get_viewport_height()
         if dpg.is_item_visible("settings_modal"):
-            w, h = dpg.get_viewport_width(), dpg.get_viewport_height()
             dpg.configure_item("settings_modal", pos=[w // 2 - 350, h // 2 - 200])
 
-        w, h = dpg.get_viewport_width(), dpg.get_viewport_height()
         if dpg.is_item_visible("save_pdz_modal"):
             dpg.configure_item("save_pdz_modal", pos=[w // 2 - 350, h // 2 - 200])
 
