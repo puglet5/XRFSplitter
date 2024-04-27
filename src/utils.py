@@ -884,10 +884,10 @@ class PDZFile:
 class PlotData:
     pdz_directory: Path
     pdz_data: dict[str, PDZFile] = field(init=False, factory=dict)
-    pca_data: npt.NDArray[np.float_] | None = field(
+    pca_data: npt.NDArray[np.float64] | None = field(
         init=False, factory=lambda: np.array([])
     )
-    pca_shapes: list[list[npt.NDArray[np.float_]]] | None = field(
+    pca_shapes: list[list[npt.NDArray[np.float64]]] | None = field(
         init=False, factory=list
     )
     pca_info: PCA | None = field(init=False, default=None)

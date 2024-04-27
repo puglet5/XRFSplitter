@@ -4,7 +4,6 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
-pandas = "*"
 numpy = "*"
 xrfsplitter = {file = ".", editable = true}
 coloredlogs = "*"
@@ -14,6 +13,7 @@ scikit-learn = "*"
 matplotlib = "*"
 attrs = "*"
 openpyxl = "*"
+pandas = {extras = ["performance"], version = "*"}
 
 [dev-packages]
 black = "*"
@@ -26,6 +26,7 @@ memory-profiler = "*"
 typing-extensions = "*"
 pip-licenses = "*"
 pylint = "*"
+ruff = "*"
 
 [requires]
 python_version = "3.12"
