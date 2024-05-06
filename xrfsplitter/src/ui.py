@@ -1,18 +1,18 @@
-from functools import partial
-from attrs import define, field, asdict
 import gc
 import os
-from pathlib import Path
 import re
-from typing import Any, Callable, Literal
 import uuid
+from functools import partial
+from pathlib import Path
+from typing import Any, Callable, Literal, assert_never
+from zipfile import ZipFile
 
-import numpy as np
 import dearpygui.dearpygui as dpg
+import numpy as np
 import pandas as pd
-
-from src.settings import Setting, Settings
-from src.utils import (
+from attrs import asdict, define, field
+from settings import Setting, Settings
+from utils import (
     COLUMN_PRESETS,
     EMPTY_CELL_COLOR,
     ID_COL,
@@ -31,7 +31,6 @@ from src.utils import (
     logger,
     progress_bar,
 )
-from zipfile import ZipFile
 
 
 @define
@@ -888,7 +887,6 @@ class UI:
 
         with dpg.mutex():
             if value:
-
                 files = list(self.plot_data.pdz_directory.rglob("*.pdz"))
 
                 patt = re.compile(f"^([0]+){spectrum_label}-")

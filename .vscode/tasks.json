@@ -6,7 +6,7 @@
             "type": "process",
             "command": "${command:python.interpreterPath}",
             "args": [
-                "${workspaceFolder}/src/main.py"
+                "${workspaceFolder}/xrfsplitter/src/main.py"
             ],
             "problemMatcher": [],
             "group": {

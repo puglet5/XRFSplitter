@@ -1,0 +1,42 @@
+[project]
+name = "xrfsplitter"
+version = "1.0"
+description = "Add your description here"
+authors = [
+    { name = "Michael Basmanov", email = "basmanov@itmo.ru" }
+]
+dependencies = [
+    "numpy>=1.26.4",
+    "coloredlogs>=15.0.1",
+    "dearpygui>=1.11.1",
+    "scipy>=1.13.0",
+    "scikit-learn>=1.4.2",
+    "matplotlib>=3.8.4",
+    "attrs>=23.2.0",
+    "openpyxl>=3.1.2",
+    "pandas[performance,excel]>=2.2.2",
+]
+readme = "README.md"
+requires-python = ">= 3.8"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.rye]
+managed = true
+dev-dependencies = [
+    "bandit>=1.7.8",
+    "pandas-stubs>=2.2.1.240316",
+    "ipykernel>=6.29.4",
+    "nuitka>=2.2.1",
+    "memory-profiler>=0.61.0",
+    "pip-licenses>=4.4.0",
+    "pylint>=3.1.0",
+]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/xrfsplitter"]

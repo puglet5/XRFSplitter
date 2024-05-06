@@ -6,7 +6,6 @@ import logging
 import os
 import threading
 import time
-from attrs import define, field
 from datetime import datetime as dt
 from functools import cache, cached_property, partial, wraps
 from io import BufferedReader, StringIO
@@ -30,6 +29,7 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 import scipy.stats as st
+from attrs import define, field
 from matplotlib import pyplot as plt
 from pandas import DataFrame
 from sklearn.decomposition import PCA
@@ -38,8 +38,7 @@ from sklearn.preprocessing import minmax_scale
 matplotlib.use("agg")
 plt.ioff()
 pd.set_option("future.no_silent_downcasting", True)
-ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-logging.basicConfig(filename=Path(ROOT_DIR, "log/main.log"), filemode="a")
+logging.basicConfig(filename=Path("./xrfsplitter/log/main.log"), filemode="a")
 coloredlogs.install(level="DEBUG")
 logger = logging.getLogger(__name__)
 
@@ -566,11 +565,9 @@ def log_exec_time[T, **P](f: Callable[P, T]) -> Callable[P, T]:
     return _wrapper  # type:ignore
 
 
-def progress_bar[
-    _, **P
-](f: Callable[P, Generator[float, None, None]]) -> Callable[
-    P, Generator[float, None, None]
-]:
+def progress_bar[_, **P](
+    f: Callable[P, Generator[float, None, None]],
+) -> Callable[P, Generator[float, None, None]]:
     @wraps(f)
     def _wrapper(*args, **kwargs) -> Callable[P, Generator[float, None, None]] | None:
         progress_generator = f(*args, **kwargs)
@@ -600,11 +597,9 @@ def hide_loading_indicator():
         dpg.hide_item("loading_indicator")
 
 
-def loading_indicator[
-    _, **P
-](f: Callable[P, Generator[float | int, Any, Any]], message: str) -> Callable[
-    P, Generator[float | int, Any, Any]
-]:
+def loading_indicator[_, **P](
+    f: Callable[P, Generator[float | int, Any, Any]], message: str
+) -> Callable[P, Generator[float | int, Any, Any]]:
     @wraps(f)
     def _wrapper(*args, **kwargs):
         dpg.configure_item("loading_indicator_message", label=message.center(30))
