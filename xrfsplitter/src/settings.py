@@ -1,7 +1,7 @@
-from attrs import define, field
 from typing import Callable
 
 import dearpygui.dearpygui as dpg
+from attrs import define, field
 
 
 @define

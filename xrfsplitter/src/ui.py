@@ -1,16 +1,15 @@
 import gc
-import os
 import re
 import uuid
 from functools import partial
 from pathlib import Path
-from typing import Any, Callable, Literal, assert_never
+from typing import Literal
 from zipfile import ZipFile
 
 import dearpygui.dearpygui as dpg
 import numpy as np
 import pandas as pd
-from attrs import asdict, define, field
+from attrs import define, field
 from settings import Setting, Settings
 from utils import (
     COLUMN_PRESETS,
@@ -678,7 +677,7 @@ class UI:
 
         selected_labels = list(self.table_data.selections.keys())
         try:
-            selected_labels_int = [int(l) for l in selected_labels]
+            selected_labels_int = [int(label) for label in selected_labels]
         except ValueError:
             return
         min_selection = min(selected_labels_int)
@@ -768,6 +767,8 @@ class UI:
             comments_column_index = 1
         elif comments_column_posiotion == "Last":
             comments_column_index = -1
+        else:
+            comments_column_index = 0
 
         if rows == "Visible":
             table = self.table_data.current

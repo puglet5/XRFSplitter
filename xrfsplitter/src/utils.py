@@ -7,7 +7,7 @@ import os
 import threading
 import time
 from datetime import datetime as dt
-from functools import cache, cached_property, partial, wraps
+from functools import cached_property, partial, wraps
 from io import BufferedReader, StringIO
 from pathlib import Path
 from struct import unpack
@@ -17,9 +17,7 @@ from typing import (
     Generator,
     Literal,
     NotRequired,
-    ParamSpec,
     TypedDict,
-    TypeVar,
 )
 
 import coloredlogs
@@ -659,7 +657,7 @@ class XRFSpectrum:
     name: str = field(init=False, default="")
 
     @cached_property
-    def energies(self):
+    def energies(self) -> npt.NDArray[np.floating]:
         return np.array(
             [
                 round(
@@ -810,33 +808,33 @@ class PDZFile:
         assert self._pdz_file_reader is not None
         return unpack(fmt, self._pdz_file_reader.read(size))[0]
 
-    def _read_n_bytes(self, size: int):
+    def _read_n_bytes(self, size: int) -> bytes:
         assert self._pdz_file_reader is not None
         return self._pdz_file_reader.read(size)
 
-    def _read_string(self):
+    def _read_string(self) -> str:
         assert self._pdz_file_reader is not None
         return self._pdz_file_reader.read(self._read_bytes("<i", 4) * 2).decode("utf16")
 
-    def _read_spectrum_params(self, spectrum: XRFSpectrum):
+    def _read_spectrum_params(self, spectrum: XRFSpectrum) -> None:
         for attr, fmt in self._spectrum_attr_formats:
             value = self._dispatch[fmt]()
             spectrum.__setattr__(attr, value)
 
         spectrum.ambient_temp_celsius = (spectrum.ambient_temp_fahrenheit - 32) / 1.8
 
-    def _read_spectrum_counts(self, spectrum: XRFSpectrum):
+    def _read_spectrum_counts(self, spectrum: XRFSpectrum) -> None:
         for _ in range(spectrum._n_channels):
             spectrum.counts.append(self._read_bytes("<i", 4))
 
-    def _append_spectrum(self):
+    def _append_spectrum(self) -> None:
         self.spectra.append(XRFSpectrum())
         self._read_spectrum_params(self.spectra[-1])
         self._read_spectrum_counts(self.spectra[-1])
         self.spectra[-1].energies
         self.phase_count += 1
 
-    def _read_pdz_data(self):
+    def _read_pdz_data(self) -> None:
         with open(self.pdz_file_path, "rb") as self._pdz_file_reader:
             for attr, fmt in self._pdz_attr_formats_1:
                 self.__setattr__(attr, self._dispatch[fmt]())
@@ -859,7 +857,7 @@ class PDZFile:
                     self._append_spectrum()
 
     @property
-    def plot_data(self):
+    def plot_data(self) -> npt.NDArray[np.floating]:
         if len(self.spectra) == 3:
             counts = np.add(
                 np.array(self.spectra[1].counts), np.array(self.spectra[2].counts)
@@ -888,17 +886,17 @@ class PlotData:
     pca_info: PCA | None = field(init=False, default=None)
     pca: PCA = field(init=False, default=PCA(n_components=2, svd_solver="full"))
 
-    def __attrs_post_init__(self):
+    def __attrs_post_init__(self) -> None:
         self.clear()
 
-    def clear(self):
+    def clear(self) -> None:
         self.pdz_data = {}
         self.pca_info = None
         self.pca_shapes = None
         self.pca_data = None
         self.pca = PCA(n_components=2, svd_solver="full")
 
-    def generate_pca_data(self):
+    def generate_pca_data(self) -> None:
         if len(self.pdz_data) < 3:
             self.pca_data = None
             self.pca_info = None
@@ -980,7 +978,7 @@ class TableData:
                 f"Couldn't determine first table row. Probably a bad table format: {e}"
             )
 
-    def _sorter(self, x, y):
+    def _sorter(self, x, y) -> Literal[-1] | Literal[1] | Literal[0]:
         strx = str(x[1])
         stry = str(y[1])
 
@@ -1014,7 +1012,7 @@ class TableData:
         else:
             return 0
 
-    def _construct_results_dict(self):
+    def _construct_results_dict(self) -> dict[str, Result]:
         with open(self.path, "r") as f:
             lines_arr = list(
                 csv.reader(
@@ -1037,12 +1035,12 @@ class TableData:
 
         results_data: Results = {}
         for lines in lines_same_header:
-            for l in lines[1:]:
-                results_data[l[0]] = dict(zip(lines[0], l))  # type: ignore
+            for line in lines[1:]:
+                results_data[line[0]] = dict(zip(lines[0], line))  # type: ignore
 
         return results_data
 
-    def _results_to_array(self, data: Results):
+    def _results_to_array(self, data: Results) -> list[list[str]]:
         last_result = max([int(s) for s in data.keys()])
 
         data_selected = [
@@ -1058,7 +1056,7 @@ class TableData:
 
         return data_strings
 
-    def _raw_to_csv(self, data: list[list[str]]):
+    def _raw_to_csv(self, data: list[list[str]]) -> StringIO:
         data.insert(0, RESULT_KEYS)
         sio = StringIO()
         csv_writer = csv.writer(sio, quotechar="'")
@@ -1066,7 +1064,7 @@ class TableData:
         sio.seek(0)
         return sio
 
-    def toggle_lod(self, state: bool):
+    def toggle_lod(self, state: bool) -> None:
         if state:
             self.current.update(
                 self.original, overwrite=False, filter_func=lambda x: x == ""
@@ -1076,7 +1074,7 @@ class TableData:
 
         self.lod_shown = state
 
-    def filter_lod(self, df: DataFrame, state: bool):
+    def filter_lod(self, df: DataFrame, state: bool) -> DataFrame:
         if state:
             df.update(self.original, overwrite=False, filter_func=lambda x: x == "")
         else:
@@ -1086,7 +1084,7 @@ class TableData:
 
         return df
 
-    def toggle_columns(self, keys: list[str] | Literal["empty"], state: bool):
+    def toggle_columns(self, keys: list[str] | Literal["empty"], state: bool) -> None:
         if state:
             if isinstance(keys, list):
                 columns_to_show = self.shown_cols + keys
@@ -1145,7 +1143,7 @@ class TableData:
         self.current = filtered
         self.sort(*self.sorted_by)
 
-    def filter_empty_rows(self):
+    def filter_empty_rows(self) -> None:
         if self.current.empty:
             return
 
@@ -1158,7 +1156,7 @@ class TableData:
 
         self.current = filtered
 
-    def filter_invalid_rows(self, threshold: float):
+    def filter_invalid_rows(self, threshold: float) -> None:
         df = (
             self.current[self.current.columns.intersection(RESULT_ELEMENTS)]
             .replace(["", "< LOD"], "0.0000")
@@ -1167,7 +1165,7 @@ class TableData:
         mask = df.sum(axis=1) > threshold
         self.current = self.current[mask]
 
-    def normalize_rows(self):
+    def normalize_rows(self) -> None:
         elements = self.current.columns.intersection(RESULT_ELEMENTS)
         df = self.current[elements].replace(["", "< LOD"], "0.0000").astype(float)
         row_total = df.sum(axis=1) / 100
@@ -1178,13 +1176,13 @@ class TableData:
         )
         self.current[elements] = normalized
 
-    def select_rows_list(self, row_list: list[str] | None):
+    def select_rows_list(self, row_list: list[str] | None) -> DataFrame:
         if row_list is None:
             row_list = self.shown_rows
         filtered = self.current.loc[self.current[ID_COL].isin(row_list)]
         return filtered
 
-    def sort(self, column: str, reverse: bool):
+    def sort(self, column: str, reverse: bool) -> DataFrame:
         col = self.current[column].tolist()
         sorted_arr_ids = [
             b[0]
@@ -1198,7 +1196,7 @@ class TableData:
 
         return self.current
 
-    def append_errs(self):
+    def append_errs(self) -> DataFrame:
         new_df = DataFrame()
 
         err_df = self.original[RESULT_KEYS_ERR].replace("", "0.0000")
@@ -1213,17 +1211,17 @@ class TableData:
 
         return new_df
 
-    def selected_to_clipboard(self):
+    def selected_to_clipboard(self) -> None:
         selected_rows = self.current[self.current[ID_COL].isin(self.selections)]
         selected_rows.to_clipboard(excel=True, index=False)
 
-    def fill_with_zeros(self):
+    def fill_with_zeros(self) -> None:
         self.current = self.current.replace("", "0.0000")
 
     def generate_table_with_comments(
         self, df: DataFrame, comments_column_index: int = 0
-    ):
-        comments_data = [
+    ) -> DataFrame:
+        comments_data: list[str] = [
             self.comments[label]["comment"] if self.comments.get(label, None) else ""
             for label in df[ID_COL]
         ]
